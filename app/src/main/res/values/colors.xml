@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 主色调：深色黑底 + 荧光绿 -->
+    <color name="bg_dark">#0A110D</color>
+    <color name="bg_card">#141B17</color>
+    <color name="bg_card_elevated">#1A241E</color>
+    <color name="bg_panel_right">#0F1612</color>
+    <color name="bg_drawer">#0D1510</color>
+
+    <!-- 荧光绿 -->
+    <color name="green_neon">#39FF14</color>
+    <color name="green_bright">#00FF66</color>
+    <color name="green_mid">#00CC55</color>
+    <color name="green_dim">#008844</color>
+
+    <!-- 警告 / 错误 -->
+    <color name="red_alert">#FF4444</color>
+    <color name="orange_warn">#FFB020</color>
+    <color name="purple_info">#AA66FF</color>
+
+    <!-- 文字 -->
+    <color name="text_primary">#E8FFF0</color>
+    <color name="text_secondary">#7A8A80</color>
+    <color name="text_green">#39FF14</color>
+
+    <!-- 进度 / 状态 -->
+    <color name="progress_green">#39FF14</color>
+    <color name="progress_track">#1E2A24</color>
+    <color name="check_done">#39FF14</color>
+    <color name="check_pending">#2A3630</color>
+
+    <!-- 边线黄色（场地网格） -->
+    <color name="court_yellow">#FFDD00</color>
+    <color name="court_line_white">#FFFFFF</color>
+
+    <!-- Theme colors -->
+    <color name="colorPrimary">#0A110D</color>
+    <color name="colorPrimaryDark">#000000</color>
+    <color name="colorAccent">#39FF14</color>
+</resources>

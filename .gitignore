@@ -1,0 +1,38 @@
+# Build outputs
+build/
+app/build/
+captures/
+.externalNativeBuild/
+.cxx/
+
+# Gradle
+.gradle/
+/local.properties
+*.iml
+.idea/
+!gradle/wrapper/gradle-wrapper.jar
+
+# Android
+*.apk
+*.ap_
+*.aab
+*.dex
+*.class
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# NDK
+obj/
+libs/
+
+# OpenCV SDK (not needed in repo, user can download)
+opencv-sdk/
+
+# Temporary
+*.tmp
+*.bak

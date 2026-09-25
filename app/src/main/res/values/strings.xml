@@ -1,0 +1,123 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">杀球测速</string>
+
+    <!-- 侧边栏菜单 -->
+    <string name="nav_speed_mode">测速模式</string>
+    <string name="nav_history">历史记录</string>
+    <string name="nav_settings">画面设置</string>
+    <string name="nav_tutorial">使用教程</string>
+    <string name="nav_mine">我的</string>
+    <string name="nav_about">关于</string>
+    <string name="nav_logout">退出注销</string>
+
+    <!-- 测速模式页 -->
+    <string name="speed_mode_title">选择测速模式</string>
+    <string name="realtime_mode">实时测速</string>
+    <string name="realtime_desc">把手机对准正在打球的场地，本APP会实时计算并显示每帧球的球速并还原出3D羽毛球轨迹。</string>
+    <string name="upload_mode">上传视频测速</string>
+    <string name="upload_desc">上传录制好的打球视频，本APP会计算整个视频后，再显示每帧球速并还原出3D羽毛球轨迹。</string>
+    <string name="in_dev">开发中</string>
+    <string name="enter">进入</string>
+
+    <!-- 上传测速页 -->
+    <string name="upload_title">上 传 视 频 测 速</string>
+    <string name="upload_hint_1">不要使用广角、鱼眼镜头拍摄</string>
+    <string name="upload_hint_2">推荐使用帧率30FPS的视频</string>
+    <string name="upload_hint_3">慎用视频平台下载的被补帧、抽帧过的视频</string>
+    <string name="btn_upload_video">上传视频</string>
+    <string name="btn_start_analyze">开始测速</string>
+
+    <!-- 算法模块标题 -->
+    <string name="module_court">场地基准检测</string>
+    <string name="module_court_desc">场地线清晰可见，无场地线的视频不能测速</string>
+    <string name="module_shuttle">羽毛球检测</string>
+    <string name="module_shuttle_desc">确保视频中羽毛球拍摄清晰，不要和白色背景融合</string>
+    <string name="module_player">人员检测</string>
+    <string name="module_player_desc">调整拍摄角度，确保人员尽量不要互相遮挡</string>
+    <string name="module_hit">击球点检测</string>
+    <string name="module_hit_desc">尽量确保羽毛球始终在画面内，不要飞出画面</string>
+    <string name="module_speed">计算球速</string>
+    <string name="module_speed_desc">切勿使用鱼眼镜头拍摄，画面畸变的视频无法测速</string>
+
+    <!-- 进度文字 -->
+    <string name="progress_processing">正在处理视频</string>
+    <string name="progress_detecting_repeat">正在检测重复帧</string>
+    <string name="progress_court">正在检测场地线</string>
+    <string name="progress_shuttle">正在检测羽毛球</string>
+    <string name="progress_player">正在检测人员</string>
+    <string name="progress_hit">正在检测击球点</string>
+    <string name="progress_speed">正在计算球速</string>
+    <string name="progress_analyzing">正在进行分析</string>
+    <string name="progress_cancel">取消</string>
+    <string name="progress_estimated">预计时长3分钟，您可退出应用，程序会继续分析</string>
+
+    <!-- 结果 -->
+    <string name="result_title">测速结果</string>
+    <string name="result_max_speed">最高速度</string>
+    <string name="result_avg_speed">平均速度</string>
+    <string name="result_hit_type">击球类型</string>
+    <string name="result_in_out">界内 / 界外</string>
+    <string name="result_shot_speed">出拍速度</string>
+    <string name="result_realtime">实时速度</string>
+
+    <!-- 历史 -->
+    <string name="history_title">历史记录</string>
+    <string name="history_empty">还没有测速记录</string>
+    <string name="history_all_dates">全部日期</string>
+    <string name="history_select_all">全选</string>
+
+    <!-- 设置 -->
+    <string name="settings_title">画面设置</string>
+    <string name="settings_virtual_court">虚拟场地</string>
+    <string name="settings_show_virtual">显示虚拟场地网格</string>
+    <string name="settings_show_shot_speed">出拍速度</string>
+    <string name="settings_show_realtime">实时速度</string>
+    <string name="settings_show_hit_type">击球类型</string>
+    <string name="settings_show_in_out">界内界外判定</string>
+
+    <!-- 教程/关于 -->
+    <string name="tutorial_title">使用教程</string>
+    <string name="about_title">关于</string>
+
+    <string name="tutorial_body">一、视频拍摄建议
+
+1. 建议使用 30FPS 的视频
+2. 不要使用广角、鱼眼镜头拍摄
+3. 调整拍摄角度，确保场地线清晰可见
+4. 羽毛球尽量始终在画面内，不要飞出画面
+5. 人员尽量不要互相遮挡
+
+二、测速流程
+
+1. 在"测速模式"页面选择"上传视频测速"
+2. 点击"上传视频"按钮选择本地视频文件
+3. 等待前置校验完成（检测帧率、广角、重复帧）
+4. 校验通过后点击"开始测速"
+5. 系统会依次完成四个模块的检测：
+   - 场地基准检测（Canny边缘 + 霍夫直线 + RANSAC + 单应矩阵）
+   - 羽毛球检测（背景差分 + SVM）
+   - 击球点检测（光流追踪球拍 + 极值检测）
+   - 计算球速（连续帧追踪 + 空间重建）
+6. 测速完成后查看结果
+
+三、画面设置
+
+在"画面设置"中可开关：
+- 虚拟场地网格（黄色线条叠加）
+- 出拍速度 / 实时速度 / 击球类型 / 界内界外
+
+四、历史记录
+
+所有测速结果自动保存到本地数据库
+可按日期筛选，点击查看详情
+
+五、隐私说明
+
+所有计算均在本地完成，不上传任何视频数据到云端</string>
+
+    <!-- 公共 -->
+    <string name="ok">确定</string>
+    <string name="cancel">取消</string>
+    <string name="back">返回</string>
+</resources>

@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources xmlns:tools="http://schemas.android.com/tools">
+
+    <!-- 应用主题：深色黑底 + 荧光绿 -->
+    <style name="Theme.BadmintonSpeed" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+        <item name="android:windowBackground">@color/bg_dark</item>
+        <item name="android:windowIsTranslucent">false</item>
+        <item name="android:statusBarColor">@color/bg_dark</item>
+        <item name="android:navigationBarColor">@color/bg_dark</item>
+        <item name="android:windowLightStatusBar" tools:targetApi="m">false</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="o_mr1">false</item>
+        <item name="colorPrimary">@color/green_neon</item>
+        <item name="colorPrimaryDark">@color/green_dim</item>
+        <item name="colorAccent">@color/green_neon</item>
+    </style>
+
+    <!-- 深色卡片样式 -->
+    <style name="CardDark">
+        <item name="android:background">@drawable/bg_dark_card</item>
+        <item name="android:padding">16dp</item>
+    </style>
+
+    <!-- 荧光绿按钮 -->
+    <style name="BtnGreen" parent="Widget.MaterialComponents.Button">
+        <item name="backgroundTint">@color/green_neon</item>
+        <item name="android:textColor">@color/bg_dark</item>
+        <item name="cornerRadius">12dp</item>
+        <item name="android:textSize">18sp</item>
+        <item name="android:padding">16dp</item>
+        <item name="android:textStyle">bold</item>
+    </style>
+
+    <style name="BtnGreenOutline">
+        <item name="android:background">@drawable/bg_btn_green_outline</item>
+        <item name="android:textColor">@color/green_neon</item>
+        <item name="android:textSize">18sp</item>
+        <item name="android:padding">16dp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:gravity">center</item>
+    </style>
+
+</resources>
