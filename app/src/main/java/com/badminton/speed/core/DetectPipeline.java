@@ -41,6 +41,7 @@ public class DetectPipeline {
         public List<Double> speedsKmH;
         public List<HitDetector.HitEvent> hits;
         public SpeedCalculator.Summary summary;
+        public List<double[]> trajectory3D;  // 3D 重建轨迹（米制坐标）
         public boolean success = false;
         public String errorMessage;
     }
@@ -169,6 +170,8 @@ public class DetectPipeline {
             // 最终击球类型、界内界外判定
             Point finalPt = trajectory.isEmpty() ? null : trajectory.get(trajectory.size() - 1);
             res.summary = speedCalc.summarize(speedsKmH, finalPt, H);
+            // 3D 轨迹重建
+            res.trajectory3D = speedCalc.reconstruct3D(trajectory, H);
             res.success = true;
             if (cb != null) cb.onModuleProgress("计算球速", 100, "通过 ✅");
 

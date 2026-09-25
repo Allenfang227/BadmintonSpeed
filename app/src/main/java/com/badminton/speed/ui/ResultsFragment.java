@@ -16,6 +16,8 @@ import androidx.fragment.app.Fragment;
 import com.badminton.speed.MainActivity;
 import com.badminton.speed.R;
 
+import java.util.List;
+
 /**
  * 测速结果展示页：最高速度仪表盘 + 详细数据 + 模块状态。
  */
@@ -45,6 +47,26 @@ public class ResultsFragment extends Fragment {
         TextView tvInOut = v.findViewById(R.id.tv_in_out);
         TextView tvShot = v.findViewById(R.id.tv_shot_speed);
         TextView tvModuleStatus = v.findViewById(R.id.tv_module_status);
+        TrajectoryView trajectoryView = v.findViewById(R.id.trajectory_view);
+
+        // 显示轨迹
+        List<double[]> traj = UploadFragment.sharedTrajectory3D;
+        if (trajectoryView != null && traj != null && !traj.isEmpty()) {
+            trajectoryView.setTrajectory(traj);
+        }
+
+        // 读取设置项控制显示
+        android.content.SharedPreferences sp = requireContext().getSharedPreferences("settings", 0);
+        boolean showHitType = sp.getBoolean("show_hit_type", true);
+        boolean showInOut = sp.getBoolean("show_in_out", true);
+        boolean showShotSpeed = sp.getBoolean("show_shot_speed", true);
+
+        View hitTypeRow = v.findViewById(R.id.row_hit_type);
+        View inOutRow = v.findViewById(R.id.row_in_out);
+        View shotSpeedRow = v.findViewById(R.id.row_shot_speed);
+        if (hitTypeRow != null) hitTypeRow.setVisibility(showHitType ? View.VISIBLE : View.GONE);
+        if (inOutRow != null) inOutRow.setVisibility(showInOut ? View.VISIBLE : View.GONE);
+        if (shotSpeedRow != null) shotSpeedRow.setVisibility(showShotSpeed ? View.VISIBLE : View.GONE);
 
         tvMax.setText(String.format("%.0f", maxSpeed));
         tvAvg.setText(String.format("%.0f", avgSpeed));

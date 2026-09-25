@@ -77,6 +77,9 @@ public class UploadFragment extends Fragment implements DetectPipeline.ProgressC
     private DetectPipeline pipeline;
     private DetectPipeline.PipelineResult lastResult;
 
+    // 轨迹数据传递（避免 Bundle 序列化大对象）
+    static List<double[]> sharedTrajectory3D;
+
     // ActivityResultLaunchers
     private final ActivityResultLauncher<String> pickVideoLauncher =
             registerForActivityResult(new ActivityResultContracts.GetContent(), uri -> {
@@ -367,6 +370,9 @@ public class UploadFragment extends Fragment implements DetectPipeline.ProgressC
         b.putBoolean("success", result.success);
         b.putString("error", result.errorMessage);
         rf.setArguments(b);
+
+        // 传递轨迹
+        sharedTrajectory3D = result.trajectory3D;
 
         requireActivity().getSupportFragmentManager().beginTransaction()
                 .replace(R.id.main_container, rf)

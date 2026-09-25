@@ -128,6 +128,7 @@
 
                 <!-- 击球类型 -->
                 <LinearLayout
+                    android:id="@+id/row_hit_type"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
@@ -159,6 +160,7 @@
 
                 <!-- 界内界外 -->
                 <LinearLayout
+                    android:id="@+id/row_in_out"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
@@ -189,6 +191,7 @@
 
                 <!-- 出拍速度 -->
                 <LinearLayout
+                    android:id="@+id/row_shot_speed"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="horizontal"
@@ -245,6 +248,46 @@
                     android:textColor="@color/text_secondary"
                     android:textSize="13sp"
                     android:lineSpacingExtra="6dp" />
+            </LinearLayout>
+        </androidx.cardview.widget.CardView>
+
+        <!-- 轨迹可视化 -->
+        <androidx.cardview.widget.CardView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            app:cardBackgroundColor="@color/bg_card"
+            app:cardCornerRadius="16dp"
+            app:cardElevation="0dp">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical"
+                android:padding="16dp">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="🏸 球迹俯视图"
+                    android:textColor="@color/green_neon"
+                    android:textSize="16sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:text="绿色为羽毛球飞行轨迹，红点为起点和落点"
+                    android:textColor="@color/text_secondary"
+                    android:textSize="11sp" />
+
+                <com.badminton.speed.ui.TrajectoryView
+                    android:id="@+id/trajectory_view"
+                    android:layout_width="match_parent"
+                    android:layout_height="220dp"
+                    android:layout_marginTop="12dp" />
+
             </LinearLayout>
         </androidx.cardview.widget.CardView>
 
