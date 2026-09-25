@@ -6,12 +6,15 @@ import android.app.AlertDialog;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
+import android.media.MediaPlayer;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.provider.Settings;
 import android.view.Gravity;
 import android.view.LayoutInflater;
+import android.view.SurfaceHolder;
+import android.view.SurfaceView;
 import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
@@ -55,17 +58,24 @@ public class UploadFragment extends Fragment implements DetectPipeline.ProgressC
     // UI
     private Button btnUpload, btnStartAnalyze, btnCancel;
     private FrameLayout leftCard;
-    private LinearLayout uploadPlaceholder, processingView, bottomProgress;
+    private LinearLayout uploadPlaceholder, bottomProgress;
+    private FrameLayout processingView;
+    private SurfaceView videoPreview;
     private ProgressBar progressMain;
     private TextView tvProgressLabel, tvProgressPct, tvAnalyzing;
     private RecyclerView repoModules;
     private AlgoModuleAdapter adapter;
+
+    // 视频播放
+    private MediaPlayer mediaPlayer;
+    private SurfaceHolder surfaceHolder;
 
     // 状态
     private String currentVideoPath;
     private VideoPreValidator.ValidationReport currentReport;
     private boolean isAnalyzing = false;
     private DetectPipeline pipeline;
+    private DetectPipeline.PipelineResult lastResult;
 
     // ActivityResultLaunchers
     private final ActivityResultLauncher<String> pickVideoLauncher =
@@ -98,12 +108,25 @@ public class UploadFragment extends Fragment implements DetectPipeline.ProgressC
         leftCard = v.findViewById(R.id.left_card);
         uploadPlaceholder = v.findViewById(R.id.upload_placeholder);
         processingView = v.findViewById(R.id.processing_view);
+        videoPreview = v.findViewById(R.id.video_preview);
         bottomProgress = v.findViewById(R.id.bottom_progress);
         progressMain = v.findViewById(R.id.progress_main);
         tvProgressLabel = v.findViewById(R.id.tv_progress_label);
         tvProgressPct = v.findViewById(R.id.tv_progress_pct);
         tvAnalyzing = v.findViewById(R.id.tv_analyzing);
         repoModules = v.findViewById(R.id.repo_algo_modules);
+
+        // 初始化 SurfaceView 播放
+        surfaceHolder = videoPreview.getHolder();
+        surfaceHolder.addCallback(new SurfaceHolder.Callback() {
+            @Override public void surfaceCreated(SurfaceHolder holder) {
+                if (mediaPlayer != null) mediaPlayer.setDisplay(holder);
+            }
+            @Override public void surfaceChanged(SurfaceHolder holder, int f, int w, int h) {}
+            @Override public void surfaceDestroyed(SurfaceHolder holder) {
+                if (mediaPlayer != null) { mediaPlayer.setDisplay(null); }
+            }
+        });
 
         btnUpload.setOnClickListener(view -> {
             if (allPermGranted()) pickVideoLauncher.launch("video/*");
@@ -235,20 +258,37 @@ public class UploadFragment extends Fragment implements DetectPipeline.ProgressC
     }
 
     private void tryShowFirstFrame() {
+        if (currentVideoPath == null) return;
         try {
-            // 先预览占位：直接放一张默认图片，真实 TextureView 后续再处理
-            // 这里简化：如果 OpenCV 可用，读取第一帧存为 Bitmap 然后 set 到 ImageView
-            if (currentVideoPath == null) return;
-            if (!com.badminton.speed.OpenCVInit.isLoaded()) return;
-
-            VideoCapture cap = new VideoCapture(currentVideoPath);
-            Mat frame = new Mat();
-            if (cap.open(currentVideoPath) && cap.read(frame) && !frame.empty()) {
-                // 简化：不做 TextureView 显示，因为 TextureView 需要主线程 + SurfaceTexture
-                // 而是在 TextView 里显示帧号/进度
+            if (mediaPlayer != null) {
+                mediaPlayer.release();
             }
-            cap.release();
-        } catch (Throwable ignore) {}
+            mediaPlayer = new MediaPlayer();
+            mediaPlayer.setDataSource(currentVideoPath);
+            mediaPlayer.setDisplay(surfaceHolder);
+            mediaPlayer.setLooping(true);
+            mediaPlayer.prepareAsync();
+            mediaPlayer.setOnPreparedListener(mp -> {
+                // 调整视频比例
+                adjustVideoSize(mp.getVideoWidth(), mp.getVideoHeight());
+                mp.start();
+            });
+            mediaPlayer.setOnErrorListener((mp, what, extra) -> true);
+        } catch (Throwable t) {
+            android.util.Log.e("UploadFragment", "video play error", t);
+        }
+    }
+
+    private void adjustVideoSize(int vw, int vh) {
+        if (vw <= 0 || vh <= 0) return;
+        ViewGroup.LayoutParams lp = videoPreview.getLayoutParams();
+        FrameLayout parent = (FrameLayout) videoPreview.getParent();
+        int pw = parent.getWidth(), ph = parent.getHeight();
+        if (pw <= 0 || ph <= 0) return;
+        float scale = Math.min((float) pw / vw, (float) ph / vh);
+        lp.width = (int) (vw * scale);
+        lp.height = (int) (vh * scale);
+        videoPreview.setLayoutParams(lp);
     }
 
     // ==================== 测速主流程 ====================
@@ -290,6 +330,7 @@ public class UploadFragment extends Fragment implements DetectPipeline.ProgressC
     private void showResultAndSave(DetectPipeline.PipelineResult result) {
         if (!isAdded()) return;
 
+        lastResult = result;
         DetectResult dr = new DetectResult();
         dr.videoPath = currentVideoPath;
         dr.fps = currentReport != null ? currentReport.fps : 30;
@@ -314,34 +355,23 @@ public class UploadFragment extends Fragment implements DetectPipeline.ProgressC
             dr.id = db.save(dr);
         }
 
-        // 弹窗结果
-        String msg;
-        if (result.success) {
-            msg = String.format(
-                    "✅ 测速完成\n\n" +
-                    "最高速度: %.0f km/h\n" +
-                    "平均速度: %.0f km/h\n" +
-                    "击球类型: %s\n" +
-                    "界内/界外: %s\n\n" +
-                    "已保存到历史记录",
-                    dr.maxSpeed, dr.avgSpeed,
-                    dr.hitType != null ? dr.hitType : "-",
-                    dr.inOut != null ? dr.inOut : "-");
-        } else {
-            msg = "❌ 测速失败: " + (result.errorMessage != null ? result.errorMessage : "未知错误");
-        }
+        // 跳转结果页
+        ResultsFragment rf = new ResultsFragment();
+        Bundle b = new Bundle();
+        b.putDouble("maxSpeed", dr.maxSpeed);
+        b.putDouble("avgSpeed", dr.avgSpeed);
+        b.putString("hitType", dr.hitType);
+        b.putString("inOut", dr.inOut);
+        b.putString("shotSpeed", dr.shotSpeed);
+        b.putString("videoPath", currentVideoPath);
+        b.putBoolean("success", result.success);
+        b.putString("error", result.errorMessage);
+        rf.setArguments(b);
 
-        new AlertDialog.Builder(requireContext())
-                .setTitle("测速结果")
-                .setMessage(msg)
-                .setPositiveButton("查看历史", (d, w) -> {
-                    requireActivity().getSupportFragmentManager().beginTransaction()
-                            .replace(R.id.main_container, new HistoryFragment())
-                            .addToBackStack(null)
-                            .commit();
-                })
-                .setNegativeButton("关闭", null)
-                .show();
+        requireActivity().getSupportFragmentManager().beginTransaction()
+                .replace(R.id.main_container, rf)
+                .addToBackStack(null)
+                .commit();
     }
 
     // ==================== Pipeline 回调 ====================
@@ -385,5 +415,14 @@ public class UploadFragment extends Fragment implements DetectPipeline.ProgressC
         if (!isAdded()) return;
         requireActivity().runOnUiThread(() ->
                 Toast.makeText(requireContext(), "测速错误: " + msg, Toast.LENGTH_LONG).show());
+    }
+
+    @Override
+    public void onDestroyView() {
+        super.onDestroyView();
+        if (mediaPlayer != null) {
+            try { mediaPlayer.release(); } catch (Throwable ignore) {}
+            mediaPlayer = null;
+        }
     }
 }
