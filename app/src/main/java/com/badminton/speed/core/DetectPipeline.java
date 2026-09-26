@@ -88,49 +88,51 @@ public class DetectPipeline {
                 if (cb != null) cb.onError(res.errorMessage);
                 return res;
             }
-            int totalFrames = (int) cap.get(Videoio.CAP_PROP_FRAME_COUNT);
-            double fps = cap.get(Videoio.CAP_PROP_FPS);
-            if (fps <= 0) fps = report.fps > 0 ? report.fps : 30;
-            if (totalFrames <= 0) totalFrames = (int) (fps * (report.durationMs > 0 ? report.durationMs / 1000.0 : 10));
-            if (totalFrames <= 0) totalFrames = 300; // 兜底
+            // FPS 和帧数优先用 validator 估算结果（Android 上 CAP_PROP 不可靠）
+            double fps = report.fps > 0 ? report.fps : 30;
+            int totalFrames = (int) Math.round(fps * (report.durationMs > 0 ? report.durationMs / 1000.0 : 10));
+            if (totalFrames <= 0) totalFrames = 300;
 
-            // ===== 场地检测（用前 10 帧累积找最清晰的场地）=====
+            // ===== 场地检测（顺序读前 120 帧，不用 seek，Android 上 seek 不可靠）=====
             if (cb != null) { cb.onStageLabel("正在检测场地线"); cb.onModuleProgress("场地基准检测", 20, "检测中 20%"); }
             CourtDetector.CourtResult court = null;
             Mat frame = new Mat();
             int sampleFrames = Math.min(totalFrames, 120);
             for (int i = 0; i < sampleFrames; i++) {
                 if (cancelled) break;
-                cap.set(Videoio.CAP_PROP_POS_FRAMES, i * Math.max(1, totalFrames / Math.min(60, sampleFrames)));
-                if (!cap.read(frame) || frame.empty()) continue;
+                if (!cap.read(frame) || frame.empty()) break;
                 CourtDetector.CourtResult cr = courtDetector.detect(frame);
                 if (cr.ok && cr.homography != null && !cr.homography.empty()) {
                     court = cr;
                     if (cb != null) cb.onModuleProgress("场地基准检测", Math.min(100, (i + 1) * 100 / sampleFrames), "检测中");
                 }
-                // 释放叠加帧（如果有）
                 if (cr.overlayFrame != null) cr.overlayFrame.release();
             }
-            if (court != null && court.overlayFrame != null) {
-                // 保留 court 数据但释放叠加帧（不再需要）
-            }
             frame.release();
+            cap.release(); // 关闭，重新打开以确保从第一帧开始
+
             res.court = court;
             if (cb != null) cb.onModuleProgress("场地基准检测", court != null ? 100 : 30, court != null ? "通过 ✅" : "警告⚠");
 
-            // ===== 羽毛球 + 人员 + 击球点 逐帧处理 =====
+            // ===== 羽毛球 + 人员 + 击球点 逐帧处理（重新打开视频）=====
             if (cb != null) { cb.onStageLabel("正在检测羽毛球"); }
-            cap.set(Videoio.CAP_PROP_POS_FRAMES, 0);
+            VideoCapture cap2 = new VideoCapture();
+            cap2.open(videoPath);
             List<Point> trajectory = new ArrayList<>();
             List<Double> speedsPxSec = new ArrayList<>();
 
             Mat frame2 = new Mat();
             int processed = 0;
             int frameStep = Math.max(1, (int) Math.round(fps / 30.0)); // 如果视频 > 30fps，抽帧
+            int frameStepCounter = 0;
 
-            while (!cancelled && cap.read(frame2)) {
-                if (processed % frameStep != 0) { processed++; frame2.release(); continue; }
+            while (!cancelled && cap2.read(frame2)) {
                 if (frame2.empty()) break;
+                frameStepCounter++;
+                if (frameStepCounter % frameStep != 0) {
+                    frame2.release();
+                    continue;
+                }
 
                 // 羽毛球检测
                 Point shuttlePt = null;
@@ -156,7 +158,8 @@ public class DetectPipeline {
                 }
                 processed++;
             }
-            cap.release();
+            cap2.release();
+            Log.i(TAG, "Processed " + processed + " frames, trajectory size=" + trajectory.size());
 
             // 计算帧间像素速度
             for (int i = 1; i < trajectory.size(); i++) {
@@ -184,8 +187,11 @@ public class DetectPipeline {
             res.speedsKmH = speedsKmH;
             if (cb != null) cb.onModuleProgress("计算球速", 80, "计算中");
 
-            // 最终击球类型、界内界外判定
-            Point finalPt = trajectory.isEmpty() ? null : trajectory.get(trajectory.size() - 1);
+            // 最终击球类型、界内界外判定 —— 找最后一个非 null 的点
+            Point finalPt = null;
+            for (int i = trajectory.size() - 1; i >= 0; i--) {
+                if (trajectory.get(i) != null) { finalPt = trajectory.get(i); break; }
+            }
             res.summary = speedCalc.summarize(speedsKmH, finalPt, H);
             // 3D 轨迹重建
             res.trajectory3D = speedCalc.reconstruct3D(trajectory, H);

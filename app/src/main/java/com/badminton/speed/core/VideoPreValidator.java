@@ -62,8 +62,11 @@ public class VideoPreValidator {
         MediaMetadataRetriever mmr = new MediaMetadataRetriever();
         try {
             mmr.setDataSource(videoPath);
+            // FPS：先试 CAPTURE_FRAMERATE，不行则用视频帧数/时长估算
             String fpsStr = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CAPTURE_FRAMERATE);
-            if (fpsStr != null) r.fps = Math.round(Float.parseFloat(fpsStr));
+            if (fpsStr != null) {
+                try { r.fps = Math.round(Float.parseFloat(fpsStr)); } catch (Exception ignored) {}
+            }
             String durStr = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION);
             if (durStr != null) r.durationMs = Long.parseLong(durStr);
             String wStr = mmr.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH);
@@ -76,23 +79,50 @@ public class VideoPreValidator {
             try { mmr.release(); } catch (Throwable ignore) {}
         }
 
-        // FPS 校验
-        if (r.fps <= 0) {
-            r.warnings.add("无法读取视频 FPS");
-        } else if (r.fps < 25) {
-            r.errors.add("视频帧率过低 (" + r.fps + " FPS)，推荐 30 FPS");
-        } else if (r.fps > 65) {
-            // 过高可能是补帧
-            r.warnings.add("视频帧率过高 (" + r.fps + " FPS)，可能是补帧后的视频");
-        } else if (r.fps >= 55 && r.fps <= 65) {
-            // 60fps 正常，但不是 30fps 的倍数可能有抽帧
-            r.warnings.add("视频帧率 " + r.fps + " FPS，推荐 30 FPS");
+        // ===== 用 OpenCV 估算 FPS 和帧数（Android 上 CAP_PROP 不可靠） =====
+        try {
+            VideoCapture cap = new VideoCapture();
+            if (cap.open(videoPath)) {
+                // 估算总帧数：读帧计数
+                Mat tmp = new Mat();
+                int frameCount = 0;
+                while (cap.read(tmp) && !tmp.empty()) {
+                    frameCount++;
+                    // 限制最大计数，避免长视频卡住
+                    if (frameCount > 100000) break;
+                }
+                tmp.release();
+                cap.release();
+
+                Log.i(TAG, "Estimated frame count by reading: " + frameCount);
+
+                // 估算 FPS：帧数 / 时长（秒）
+                if (r.fps <= 0 && r.durationMs > 0) {
+                    double durSec = r.durationMs / 1000.0;
+                    r.fps = (int) Math.round(frameCount / durSec);
+                    Log.i(TAG, "Estimated FPS: " + r.fps);
+                }
+
+                // 如果还是 0，用 OpenCV CAP_PROP 试试
+                if (r.fps <= 0) {
+                    cap.open(videoPath);
+                    double cvFps = cap.get(Videoio.CAP_PROP_FPS);
+                    if (cvFps > 0) r.fps = (int) Math.round(cvFps);
+                    cap.release();
+                }
+                // 兜底 30
+                if (r.fps <= 0) r.fps = 30;
+            }
+        } catch (Throwable t) {
+            Log.w(TAG, "OpenCV frame count estimate failed: " + t.getMessage());
+            if (r.fps <= 0) r.fps = 30;
         }
 
-        // ===== 阶段2: OpenCV 采样帧做视觉校验 =====
-        if (!org.opencv.core.Core.getBuildInformation().isEmpty()
-                || org.opencv.core.Mat.class != null) {
-            tryOpenCVChecks(videoPath, r);
+        // FPS 校验
+        if (r.fps < 25) {
+            r.warnings.add("视频帧率 " + r.fps + " FPS，推荐 30 FPS 以上");
+        } else if (r.fps > 65) {
+            r.warnings.add("视频帧率 " + r.fps + " FPS，可能是补帧后的视频");
         }
 
         r.ok = r.errors.isEmpty();
