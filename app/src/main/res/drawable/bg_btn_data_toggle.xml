@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<selector xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- 选中：绿色背景 -->
+    <item android:state_selected="true">
+        <shape android:shape="rectangle">
+            <solid android:color="@color/green_neon" />
+            <corners android:radius="12dp" />
+        </shape>
+    </item>
+    <!-- 未选中：深色背景 + 绿色边框 -->
+    <item>
+        <shape android:shape="rectangle">
+            <solid android:color="#1A241E" />
+            <stroke android:width="1dp" android:color="#2A3630" />
+            <corners android:radius="12dp" />
+        </shape>
+    </item>
+</selector>

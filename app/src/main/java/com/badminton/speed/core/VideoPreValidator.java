@@ -108,6 +108,11 @@ public class VideoPreValidator {
 
         Mat frame = new Mat();
         int total = (int) cap.get(Videoio.CAP_PROP_FRAME_COUNT);
+        if (total <= 0) {
+            r.warnings.add("无法读取视频帧数，跳过量检");
+            cap.release();
+            return;
+        }
         int sampleCount = Math.min(total, 30);
         int interval = Math.max(1, total / sampleCount);
         Mat prevGray = null;

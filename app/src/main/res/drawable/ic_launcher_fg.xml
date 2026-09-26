@@ -5,106 +5,87 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
 
-    <!-- 外圈光晕 -->
+    <!-- 背景圆形（深色） -->
     <path
-        android:fillColor="#39FF14"
-        android:pathData="M54,18 m-36,0 a36,36 0 1,0 72,0 a36,36 0 1,0 -72,0"
-        android:strokeWidth="2"
-        android:strokeColor="#39FF14"
-        android:strokeAlpha="0.3"/>
+        android:fillColor="#1A0000"
+        android:pathData="M54,54 m-40,0 a40,40 0 1,0 80,0 a40,40 0 1,0 -80,0"/>
 
-    <!-- 羽毛球软木底座（圆形） -->
+    <!-- 仪表盘外弧（红色） -->
     <path
-        android:fillColor="#39FF14"
-        android:pathData="M54,72 m-14,0 a14,14 0 1,0 28,0 a14,14 0 1,0 -28,0"/>
+        android:strokeColor="#FF2222"
+        android:strokeWidth="7"
+        android:strokeLineCap="round"
+        android:fillColor="#00000000"
+        android:pathData="M24,62 A32,32 0 0 1 84,62"/>
 
-    <!-- 底座内圈高光 -->
+    <!-- 仪表盘刻度线 -->
+    <path android:strokeColor="#FF4444" android:strokeWidth="2.5" android:strokeLineCap="round"
+        android:pathData="M28,58 L24,52"/>
+    <path android:strokeColor="#FF4444" android:strokeWidth="2.5" android:strokeLineCap="round"
+        android:pathData="M36,42 L32,36"/>
+    <path android:strokeColor="#FF4444" android:strokeWidth="2.5" android:strokeLineCap="round"
+        android:pathData="M54,36 L54,30"/>
+    <path android:strokeColor="#FF4444" android:strokeWidth="2.5" android:strokeLineCap="round"
+        android:pathData="M72,42 L76,36"/>
+    <path android:strokeColor="#FF4444" android:strokeWidth="2.5" android:strokeLineCap="round"
+        android:pathData="M80,58 L84,52"/>
+
+    <!-- 羽毛球软木底座（红色圆形） -->
     <path
-        android:fillColor="#0A110D"
-        android:pathData="M54,72 m-8,0 a8,8 0 1,0 16,0 a8,8 0 1,0 -16,0"/>
+        android:fillColor="#FF3333"
+        android:pathData="M54,64 m-10,0 a10,10 0 1,0 20,0 a10,10 0 1,0 -20,0"/>
+
+    <!-- 底座内圈 -->
+    <path
+        android:fillColor="#1A0000"
+        android:pathData="M54,64 m-5,0 a5,5 0 1,0 10,0 a5,5 0 1,0 -10,0"/>
 
     <!-- 底座中心点 -->
     <path
-        android:fillColor="#39FF14"
-        android:pathData="M54,72 m-3,0 a3,3 0 1,0 6,0 a3,3 0 1,0 -6,0"/>
+        android:fillColor="#FF3333"
+        android:pathData="M54,64 m-2,0 a2,2 0 1,0 4,0 a2,2 0 1,0 -4,0"/>
 
-    <!-- 羽毛（从底座向上辐射的线条） -->
+    <!-- 羽毛（从底座向上辐射的白色线条） -->
     <!-- 左羽毛 -->
-    <path
-        android:strokeColor="#39FF14"
-        android:strokeWidth="2.5"
-        android:strokeLineCap="round"
-        android:pathData="M44,62 L30,28"/>
-    <path
-        android:strokeColor="#39FF14"
-        android:strokeWidth="2"
-        android:strokeLineCap="round"
-        android:pathData="M40,60 L22,30"/>
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="2" android:strokeLineCap="round"
+        android:pathData="M46,56 L32,30"/>
+    <path android:strokeColor="#FFEEEE" android:strokeWidth="1.5" android:strokeLineCap="round"
+        android:pathData="M42,55 L26,32"/>
 
     <!-- 中左羽毛 -->
-    <path
-        android:strokeColor="#39FF14"
-        android:strokeWidth="2.5"
-        android:strokeLineCap="round"
-        android:pathData="M49,60 L42,22"/>
-    <path
-        android:strokeColor="#39FF14"
-        android:strokeWidth="2"
-        android:strokeLineCap="round"
-        android:pathData="M46,59 L36,20"/>
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="2" android:strokeLineCap="round"
+        android:pathData="M50,54 L44,24"/>
+    <path android:strokeColor="#FFEEEE" android:strokeWidth="1.5" android:strokeLineCap="round"
+        android:pathData="M47,54 L39,22"/>
 
     <!-- 正中羽毛 -->
-    <path
-        android:strokeColor="#39FF14"
-        android:strokeWidth="3"
-        android:strokeLineCap="round"
-        android:pathData="M54,58 L54,18"/>
-    <path
-        android:strokeColor="#39FF14"
-        android:strokeWidth="2"
-        android:strokeLineCap="round"
-        android:pathData="M51,58 L48,16"/>
-    <path
-        android:strokeColor="#39FF14"
-        android:strokeWidth="2"
-        android:strokeLineCap="round"
-        android:pathData="M57,58 L60,16"/>
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="2.5" android:strokeLineCap="round"
+        android:pathData="M54,52 L54,20"/>
+    <path android:strokeColor="#FFEEEE" android:strokeWidth="1.5" android:strokeLineCap="round"
+        android:pathData="M51,52 L49,18"/>
+    <path android:strokeColor="#FFEEEE" android:strokeWidth="1.5" android:strokeLineCap="round"
+        android:pathData="M57,52 L59,18"/>
 
     <!-- 中右羽毛 -->
-    <path
-        android:strokeColor="#39FF14"
-        android:strokeWidth="2.5"
-        android:strokeLineCap="round"
-        android:pathData="M59,60 L66,22"/>
-    <path
-        android:strokeColor="#39FF14"
-        android:strokeWidth="2"
-        android:strokeLineCap="round"
-        android:pathData="M62,59 L72,20"/>
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="2" android:strokeLineCap="round"
+        android:pathData="M58,54 L64,24"/>
+    <path android:strokeColor="#FFEEEE" android:strokeWidth="1.5" android:strokeLineCap="round"
+        android:pathData="M61,54 L69,22"/>
 
     <!-- 右羽毛 -->
-    <path
-        android:strokeColor="#39FF14"
-        android:strokeWidth="2.5"
-        android:strokeLineCap="round"
-        android:pathData="M64,62 L78,28"/>
-    <path
-        android:strokeColor="#39FF14"
-        android:strokeWidth="2"
-        android:strokeLineCap="round"
-        android:pathData="M68,60 L86,30"/>
+    <path android:strokeColor="#FFFFFF" android:strokeWidth="2" android:strokeLineCap="round"
+        android:pathData="M62,56 L76,30"/>
+    <path android:strokeColor="#FFEEEE" android:strokeWidth="1.5" android:strokeLineCap="round"
+        android:pathData="M66,55 L82,32"/>
 
-    <!-- 速度弧线（表示测速） -->
+    <!-- 速度指针（红色，指向上方） -->
     <path
-        android:strokeColor="#00FF66"
-        android:strokeWidth="3"
-        android:strokeLineCap="round"
-        android:pathData="M28,50 A32,32 0 0 1 54,24"
-        android:fillColor="#00000000"/>
+        android:fillColor="#FF2222"
+        android:pathData="M52,62 L56,62 L55,36 L53,36 Z"/>
 
-    <!-- 速度箭头 -->
+    <!-- 指针中心圆点 -->
     <path
-        android:fillColor="#00FF66"
-        android:pathData="M50,22 L58,22 L54,14 Z"/>
+        android:fillColor="#FF5555"
+        android:pathData="M54,62 m-3,0 a3,3 0 1,0 6,0 a3,3 0 1,0 -6,0"/>
 
 </vector>

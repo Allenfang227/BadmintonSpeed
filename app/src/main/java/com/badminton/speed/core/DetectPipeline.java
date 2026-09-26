@@ -91,6 +91,8 @@ public class DetectPipeline {
             int totalFrames = (int) cap.get(Videoio.CAP_PROP_FRAME_COUNT);
             double fps = cap.get(Videoio.CAP_PROP_FPS);
             if (fps <= 0) fps = report.fps > 0 ? report.fps : 30;
+            if (totalFrames <= 0) totalFrames = (int) (fps * (report.durationMs > 0 ? report.durationMs / 1000.0 : 10));
+            if (totalFrames <= 0) totalFrames = 300; // 兜底
 
             // ===== 场地检测（用前 10 帧累积找最清晰的场地）=====
             if (cb != null) { cb.onStageLabel("正在检测场地线"); cb.onModuleProgress("场地基准检测", 20, "检测中 20%"); }

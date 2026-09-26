@@ -57,16 +57,30 @@ public class ResultsFragment extends Fragment {
 
         // 读取设置项控制显示
         android.content.SharedPreferences sp = requireContext().getSharedPreferences("settings", 0);
-        boolean showHitType = sp.getBoolean("show_hit_type", true);
-        boolean showInOut = sp.getBoolean("show_in_out", true);
-        boolean showShotSpeed = sp.getBoolean("show_shot_speed", true);
+        boolean showVirtualCourt = sp.getBoolean("virtual_court", true);
+        String d1 = sp.getString("d1", "inout");
+        String d2 = sp.getString("d2", "realtime");
 
+        // 虚拟场地轨迹视图
+        if (trajectoryView != null) {
+            trajectoryView.setVisibility(showVirtualCourt ? View.VISIBLE : View.GONE);
+        }
+
+        // 数据1 / 数据2 选中项影响显示
         View hitTypeRow = v.findViewById(R.id.row_hit_type);
         View inOutRow = v.findViewById(R.id.row_in_out);
         View shotSpeedRow = v.findViewById(R.id.row_shot_speed);
-        if (hitTypeRow != null) hitTypeRow.setVisibility(showHitType ? View.VISIBLE : View.GONE);
+
+        // 只要在 d1 或 d2 中被选中就显示
+        boolean showHit = "hit".equals(d1) || "hit".equals(d2);
+        boolean showInOut = "inout".equals(d1) || "inout".equals(d2);
+        boolean showShot = "shot".equals(d1) || "shot".equals(d2);
+        // 实时速度对应 avg speed 行（已有）
+        boolean showRealtime = "realtime".equals(d1) || "realtime".equals(d2);
+
+        if (hitTypeRow != null) hitTypeRow.setVisibility(showHit ? View.VISIBLE : View.GONE);
         if (inOutRow != null) inOutRow.setVisibility(showInOut ? View.VISIBLE : View.GONE);
-        if (shotSpeedRow != null) shotSpeedRow.setVisibility(showShotSpeed ? View.VISIBLE : View.GONE);
+        if (shotSpeedRow != null) shotSpeedRow.setVisibility(showShot ? View.VISIBLE : View.GONE);
 
         tvMax.setText(String.format("%.0f", maxSpeed));
         tvAvg.setText(String.format("%.0f", avgSpeed));
