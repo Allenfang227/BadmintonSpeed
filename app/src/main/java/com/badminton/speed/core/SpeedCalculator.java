@@ -109,14 +109,20 @@ public class SpeedCalculator {
     }
 
     private Point warpPoint(Mat H, Point p) {
-        Mat src = new Mat(1, 1, 6); // CV_64FC2
-        src.put(0, 0, p.x, p.y);
-        Mat dst = new Mat();
-        Core.perspectiveTransform(src, dst, H);
-        if (dst.empty()) return null;
-        double[] v = dst.get(0, 0);
-        if (v == null || v.length < 2) return null;
-        return new Point(v[0], v[1]);
+        if (H == null || H.empty() || H.rows() != 3 || H.cols() != 3) return null;
+        try {
+            Mat src = new Mat(1, 1, 6); // CV_64FC2
+            src.put(0, 0, p.x, p.y);
+            Mat dst = new Mat();
+            Core.perspectiveTransform(src, dst, H);
+            if (dst.empty()) return null;
+            double[] v = dst.get(0, 0);
+            if (v == null || v.length < 2) return null;
+            return new Point(v[0], v[1]);
+        } catch (Exception e) {
+            Log.w(TAG, "warpPoint failed: " + e.getMessage());
+            return null;
+        }
     }
 
     /**
