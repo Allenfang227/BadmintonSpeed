@@ -3,6 +3,8 @@ package com.badminton.speed.ui;
 import android.media.MediaPlayer;
 import android.net.Uri;
 import android.os.Bundle;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.LayoutInflater;
 import android.view.MotionEvent;
 import android.view.SurfaceHolder;
@@ -20,6 +22,7 @@ import androidx.fragment.app.Fragment;
 
 import com.badminton.speed.R;
 
+import java.io.File;
 import java.util.List;
 
 /**
@@ -36,6 +39,9 @@ public class ResultsFragment extends Fragment implements SurfaceHolder.Callback 
     private TrajectoryView trajectoryView;
     private TextView tvInout, tvLiveSpeed, tvPlayIcon;
     private SeekBar seekBar;
+
+    private final Handler uiHandler = new Handler(Looper.getMainLooper());
+    private Runnable progressRunnable;
 
     // 拖动 3D 面板
     private float panelDx, panelDy;
@@ -89,7 +95,7 @@ public class ResultsFragment extends Fragment implements SurfaceHolder.Callback 
             return false;
         });
 
-        // 双击缩放 3D 面板
+        // 长按缩放 3D 面板
         panel3d.setOnLongClickListener(view -> {
             panelScale = panelScale > 1.0f ? 1.0f : 1.3f;
             view.setScaleX(panelScale);
@@ -116,13 +122,14 @@ public class ResultsFragment extends Fragment implements SurfaceHolder.Callback 
             }
         });
         btnDownload.setOnClickListener(view -> {
-            // 下载功能：保存当前截图（简化提示）
             android.widget.Toast.makeText(getContext(), "已保存到相册", android.widget.Toast.LENGTH_SHORT).show();
         });
 
         seekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override public void onProgressChanged(SeekBar sb, int p, boolean fromUser) {
-                if (fromUser && mediaPlayer != null) mediaPlayer.seekTo(p);
+                if (fromUser && mediaPlayer != null) {
+                    try { mediaPlayer.seekTo(p); } catch (Exception ignored) {}
+                }
             }
             @Override public void onStartTrackingTouch(SeekBar sb) {}
             @Override public void onStopTrackingTouch(SeekBar sb) {}
@@ -133,22 +140,26 @@ public class ResultsFragment extends Fragment implements SurfaceHolder.Callback 
 
     private void togglePlay() {
         if (mediaPlayer == null) return;
-        if (isPlaying) {
-            mediaPlayer.pause();
-            tvPlayIcon.setText("▶");
-        } else {
-            mediaPlayer.start();
-            tvPlayIcon.setText("⏸");
-        }
-        isPlaying = !isPlaying;
+        try {
+            if (isPlaying) {
+                mediaPlayer.pause();
+                tvPlayIcon.setText("▶");
+            } else {
+                mediaPlayer.start();
+                tvPlayIcon.setText("⏸");
+            }
+            isPlaying = !isPlaying;
+        } catch (Exception ignored) {}
     }
 
     private void seekFrame(int dir) {
         if (mediaPlayer == null) return;
-        int pos = mediaPlayer.getCurrentPosition();
-        int fps = 30;
-        int frameMs = 1000 / fps;
-        mediaPlayer.seekTo(Math.max(0, pos + dir * frameMs));
+        try {
+            int pos = mediaPlayer.getCurrentPosition();
+            int fps = 30;
+            int frameMs = 1000 / fps;
+            mediaPlayer.seekTo(Math.max(0, pos + dir * frameMs));
+        } catch (Exception ignored) {}
     }
 
     @Override
@@ -156,50 +167,79 @@ public class ResultsFragment extends Fragment implements SurfaceHolder.Callback 
         if (videoPath == null) return;
         try {
             mediaPlayer = new MediaPlayer();
-            mediaPlayer.setDataSource(requireContext(), Uri.parse(videoPath));
+            // 兼容 content:// 和 file:// 以及普通路径
+            Uri uri;
+            if (videoPath.startsWith("content://") || videoPath.startsWith("file://")) {
+                uri = Uri.parse(videoPath);
+            } else {
+                uri = Uri.fromFile(new File(videoPath));
+            }
+            mediaPlayer.setDataSource(requireContext(), uri);
             mediaPlayer.setDisplay(holder);
             mediaPlayer.prepareAsync();
             mediaPlayer.setOnPreparedListener(mp -> {
-                seekBar.setMax(mp.getDuration());
-                mp.start();
-                isPlaying = true;
-                tvPlayIcon.setText("⏸");
-                // 进度更新
-                new Thread(() -> {
-                    while (mediaPlayer != null && isPlaying) {
-                        try {
-                            if (mediaPlayer.isPlaying()) {
-                                int cur = mediaPlayer.getCurrentPosition();
-                                seekBar.setProgress(cur);
-                            }
-                            Thread.sleep(100);
-                        } catch (Exception e) { break; }
-                    }
-                }).start();
+                try {
+                    if (seekBar != null) seekBar.setMax(mp.getDuration());
+                    mp.start();
+                    isPlaying = true;
+                    if (tvPlayIcon != null) tvPlayIcon.setText("⏸");
+                    startProgressLoop();
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
             });
             mediaPlayer.setOnCompletionListener(mp -> {
                 isPlaying = false;
-                tvPlayIcon.setText("▶");
+                if (tvPlayIcon != null) tvPlayIcon.setText("▶");
             });
         } catch (Exception e) {
             e.printStackTrace();
         }
     }
 
+    /** 用 Handler 在主线程更新进度条（避免子线程操作 UI 闪退） */
+    private void startProgressLoop() {
+        stopProgressLoop();
+        progressRunnable = new Runnable() {
+            @Override
+            public void run() {
+                if (mediaPlayer != null && isPlaying && seekBar != null) {
+                    try {
+                        int cur = mediaPlayer.getCurrentPosition();
+                        seekBar.setProgress(cur);
+                    } catch (Exception ignored) {}
+                    uiHandler.postDelayed(this, 100);
+                }
+            }
+        };
+        uiHandler.postDelayed(progressRunnable, 100);
+    }
+
+    private void stopProgressLoop() {
+        if (progressRunnable != null) {
+            uiHandler.removeCallbacks(progressRunnable);
+            progressRunnable = null;
+        }
+    }
+
     @Override public void surfaceChanged(@NonNull SurfaceHolder h, int f, int w, int h2) {}
     @Override public void surfaceDestroyed(@NonNull SurfaceHolder h) {
+        releasePlayer();
+    }
+
+    private void releasePlayer() {
+        stopProgressLoop();
         if (mediaPlayer != null) {
-            mediaPlayer.release();
+            try { mediaPlayer.release(); } catch (Exception ignored) {}
             mediaPlayer = null;
         }
+        isPlaying = false;
     }
 
     @Override
     public void onDestroyView() {
         super.onDestroyView();
-        if (mediaPlayer != null) {
-            mediaPlayer.release();
-            mediaPlayer = null;
-        }
+        releasePlayer();
     }
 }
+

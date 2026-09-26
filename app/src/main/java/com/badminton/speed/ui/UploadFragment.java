@@ -353,31 +353,40 @@ public class UploadFragment extends Fragment implements DetectPipeline.ProgressC
             dr.shotSpeed = String.format("%.0f km/h (出拍)", result.summary.maxSpeed);
             dr.realtimeSpeed = result.summary.maxSpeed > 0 ? "进行中…" : "-";
         }
-        if (result.success) {
-            HistoryDB db = new HistoryDB(requireContext());
-            dr.id = db.save(dr);
+        try {
+            if (result.success) {
+                HistoryDB db = new HistoryDB(requireContext());
+                dr.id = db.save(dr);
+            }
+        } catch (Exception e) {
+            android.util.Log.w("UploadFragment", "DB save failed: " + e.getMessage());
         }
 
-        // 跳转结果页
-        ResultsFragment rf = new ResultsFragment();
-        Bundle b = new Bundle();
-        b.putDouble("maxSpeed", dr.maxSpeed);
-        b.putDouble("avgSpeed", dr.avgSpeed);
-        b.putString("hitType", dr.hitType);
-        b.putString("inOut", dr.inOut);
-        b.putString("shotSpeed", dr.shotSpeed);
-        b.putString("videoPath", currentVideoPath);
-        b.putBoolean("success", result.success);
-        b.putString("error", result.errorMessage);
-        rf.setArguments(b);
+        try {
+            // 跳转结果页
+            ResultsFragment rf = new ResultsFragment();
+            Bundle b = new Bundle();
+            b.putDouble("maxSpeed", dr.maxSpeed);
+            b.putDouble("avgSpeed", dr.avgSpeed);
+            b.putString("hitType", dr.hitType);
+            b.putString("inOut", dr.inOut);
+            b.putString("shotSpeed", dr.shotSpeed);
+            b.putString("videoPath", currentVideoPath);
+            b.putBoolean("success", result.success);
+            b.putString("error", result.errorMessage);
+            rf.setArguments(b);
 
-        // 传递轨迹
-        sharedTrajectory3D = result.trajectory3D;
+            // 传递轨迹
+            sharedTrajectory3D = result.trajectory3D;
 
-        requireActivity().getSupportFragmentManager().beginTransaction()
-                .replace(R.id.main_container, rf)
-                .addToBackStack(null)
-                .commit();
+            requireActivity().getSupportFragmentManager().beginTransaction()
+                    .replace(R.id.main_container, rf)
+                    .addToBackStack(null)
+                    .commitAllowingStateLoss();
+        } catch (Exception e) {
+            android.util.Log.e("UploadFragment", "Fragment transaction failed", e);
+            Toast.makeText(requireContext(), "结果页加载失败: " + e.getMessage(), Toast.LENGTH_LONG).show();
+        }
     }
 
     // ==================== Pipeline 回调 ====================
