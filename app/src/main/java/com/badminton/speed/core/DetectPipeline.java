@@ -228,13 +228,21 @@ public class DetectPipeline {
                 frame2.release();
             }
             cap2.release();
+            // 关键：循环结束后立即释放检测器内部的 native Mat（帧差法保留的上一帧灰度图），
+            // 否则 native 堆累积到阶段5/6 时任何分配都可能触发 SIGSEGV 闪退。
+            try { shuttleDet.reset(); } catch (Throwable ignored) {}
+            try { playerDet.reset(); } catch (Throwable ignored) {}
+            frame2.release();
+            System.gc();
             Log.i(TAG, "Processed " + processed + " shuttle frames, " + allPlayers.size() + " player boxes, trajectory=" + trajectory.size());
 
-            // 计算帧间像素速度
+            // 计算帧间像素速度（过滤掉 null 点，避免后续遍历 native 调用过多）
+            List<Point> cleanTraj = new ArrayList<>();
+            for (Point p : trajectory) if (p != null) cleanTraj.add(p);
+            trajectory = cleanTraj;
             for (int i = 1; i < trajectory.size(); i++) {
                 Point a = trajectory.get(i - 1);
                 Point b = trajectory.get(i);
-                if (a == null || b == null) { speedsPxSec.add(0.0); continue; }
                 double dist = Math.hypot(b.x - a.x, b.y - a.y);
                 speedsPxSec.add(dist * fps * FRAME_SKIP); // 补偿抽帧
             }
@@ -246,20 +254,10 @@ public class DetectPipeline {
                 if (!playerDone) cb.onModuleProgress("人员检测", 100, allPlayers.isEmpty() ? "警告⚠" : "通过 ✅");
             }
 
-            // ===== 阶段5: 击球点检测 =====
+            // ===== 阶段5: 击球点检测（纯 Java，单次计算，避免高频 UI 更新） =====
             saveRecoveryState(videoPath, "击球点检测");
-            if (cb != null) { cb.onStageLabel("正在检测击球点"); cb.onModuleProgress("击球点检测", 10, "检测中 10%"); }
+            if (cb != null) { cb.onStageLabel("正在检测击球点"); cb.onModuleProgress("击球点检测", 50, "检测中 50%"); }
             HitDetector hitDet = new HitDetector();
-
-            // 模拟进度（让用户看到阶段）
-            if (cb != null) {
-                for (int p = 20; p <= 90; p += 20) {
-                    if (cancelled) break;
-                    try { Thread.sleep(50); } catch (InterruptedException ignored) {}
-                    cb.onModuleProgress("击球点检测", p, "检测中 " + p + "%");
-                }
-            }
-
             List<HitDetector.HitEvent> hits = hitDet.detect(trajectory, speedsPxSec);
             res.hits = hits;
             if (cb != null) cb.onModuleProgress("击球点检测", 100,
