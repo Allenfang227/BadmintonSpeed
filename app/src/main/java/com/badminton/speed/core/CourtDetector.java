@@ -51,82 +51,104 @@ public class CourtDetector {
         CourtResult r = new CourtResult();
         if (frame == null || frame.empty()) return r;
 
+        // 缩放帧加速处理
+        Mat workFrame = new Mat();
+        double scale = 1.0;
+        int targetW = 480;
+        if (frame.cols() > targetW) {
+            scale = (double) targetW / frame.cols();
+            Imgproc.resize(frame, workFrame, new Size(targetW, frame.rows() * scale));
+        } else {
+            workFrame = frame; // 直接用
+        }
+
         Mat gray = new Mat();
-        Imgproc.cvtColor(frame, gray, Imgproc.COLOR_BGR2GRAY);
-
-        // Step1: Canny 边缘检测
         Mat edges = new Mat();
-        Imgproc.GaussianBlur(gray, gray, new Size(5, 5), 0);
-        Imgproc.Canny(gray, edges, 50, 150, 3);
-
-        // Step2: 霍夫直线检测
         Mat lines = new Mat();
-        Imgproc.HoughLinesP(edges, lines, 1, Math.PI / 180,
-                80,    // 阈值
-                60,    // 最短线段
-                20);   // 间隙
 
-        if (lines.empty()) return r;
+        try {
+            Imgproc.cvtColor(workFrame, gray, Imgproc.COLOR_BGR2GRAY);
 
-        // Step3: 过滤直线 —— 场地线通常是横/竖方向，且较长
-        List<double[]> hLines = new ArrayList<>(); // 水平
-        List<double[]> vLines = new ArrayList<>(); // 垂直
+            // Step1: Canny 边缘检测
+            Imgproc.GaussianBlur(gray, gray, new Size(5, 5), 0);
+            Imgproc.Canny(gray, edges, 50, 150, 3);
 
-        for (int i = 0; i < lines.rows(); i++) {
-            double[] d = lines.get(i, 0);
-            if (d == null || d.length < 4) continue;
-            double x1 = d[0], y1 = d[1], x2 = d[2], y2 = d[3];
-            double angle = Math.abs(Math.atan2(y2 - y1, x2 - x1) * 180 / Math.PI);
-            double len = Math.hypot(x2 - x1, y2 - y1);
-            if (len < 60) continue;
-            if (angle < 30 || angle > 150) {
-                hLines.add(d);
-            } else if (angle > 60 && angle < 120) {
-                vLines.add(d);
+            // Step2: 霍夫直线检测
+            Imgproc.HoughLinesP(edges, lines, 1, Math.PI / 180,
+                    80, 60, 20);
+
+            if (lines.empty()) return r;
+
+            // Step3: 过滤直线
+            List<double[]> hLines = new ArrayList<>();
+            List<double[]> vLines = new ArrayList<>();
+
+            for (int i = 0; i < lines.rows(); i++) {
+                double[] d = lines.get(i, 0);
+                if (d == null || d.length < 4) continue;
+                double x1 = d[0], y1 = d[1], x2 = d[2], y2 = d[3];
+                double angle = Math.abs(Math.atan2(y2 - y1, x2 - x1) * 180 / Math.PI);
+                double len = Math.hypot(x2 - x1, y2 - y1);
+                if (len < 60) continue;
+                if (angle < 30 || angle > 150) {
+                    hLines.add(d);
+                } else if (angle > 60 && angle < 120) {
+                    vLines.add(d);
+                }
             }
+
+            Point top = pickBoundary(hLines, true, true);
+            Point bottom = pickBoundary(hLines, true, false);
+            Point left = pickBoundary(vLines, false, true);
+            Point right = pickBoundary(vLines, false, false);
+
+            if (top == null || bottom == null || left == null || right == null) {
+                return r;
+            }
+
+            Point tl = intersection(left, top);
+            Point tr = intersection(right, top);
+            Point bl = intersection(left, bottom);
+            Point br = intersection(right, bottom);
+
+            if (tl == null || tr == null || bl == null || br == null) return r;
+
+            // 转换回原始坐标
+            Point[] corners = new Point[]{
+                    new Point(tl.x / scale, tl.y / scale),
+                    new Point(tr.x / scale, tr.y / scale),
+                    new Point(br.x / scale, br.y / scale),
+                    new Point(bl.x / scale, bl.y / scale)
+            };
+            r.courtCorners = corners;
+
+            // Step4: findHomography
+            MatOfPoint2f src = new MatOfPoint2f(corners);
+            Point[] dstPts = {new Point(0,0), new Point(5.18,0), new Point(5.18,13.4), new Point(0,13.4)};
+            MatOfPoint2f dst = new MatOfPoint2f(dstPts);
+
+            Mat H = Calib3d.findHomography(src, dst, Calib3d.RANSAC, 3.0);
+            if (H == null || H.empty()) return r;
+
+            r.homography = H;
+            Mat Hinv = new Mat();
+            Core.invert(H, Hinv);
+            r.homographyInv = Hinv;
+            r.pxPerMeter = 5.18 / Math.max(1, Math.hypot(tr.x - tl.x, tr.y - tl.y));
+
+            r.ok = true;
+
+            // Step5: 绘制叠加帧
+            r.overlayFrame = drawCourtOverlay(frame.clone(), H);
+
+        } catch (Exception e) {
+            Log.e(TAG, "detect failed", e);
+        } finally {
+            if (workFrame != frame) workFrame.release();
+            gray.release();
+            edges.release();
+            lines.release();
         }
-
-        // 取最外侧的水平/垂直线作为场地边界
-        Point top = pickBoundary(hLines, true, true);       // 最上水平线
-        Point bottom = pickBoundary(hLines, true, false);    // 最下水平线
-        Point left = pickBoundary(vLines, false, true);     // 最左垂直线
-        Point right = pickBoundary(vLines, false, false);   // 最右垂直线
-
-        if (top == null || bottom == null || left == null || right == null) {
-            Log.i(TAG, "Cannot detect all 4 court boundaries");
-            return r;
-        }
-
-        // 场地四角：由最左/最右垂直线 × 最上/最下水平线的交点得到
-        Point tl = intersection(left, top);
-        Point tr = intersection(right, top);
-        Point bl = intersection(left, bottom);
-        Point br = intersection(right, bottom);
-
-        if (tl == null || tr == null || bl == null || br == null) return r;
-
-        Point[] corners = new Point[]{tl, tr, br, bl}; // 按左上→右上→右下→左下顺序
-        r.courtCorners = corners;
-
-        // Step4: RANSAC + findHomography —— 图像坐标 → 标准场地坐标（米）
-        // 标准单打场地四角（米）：左上 (0,0)，右上 (5.18,0)，右下 (5.18,13.4)，左下 (0,13.4)
-        MatOfPoint2f src = new MatOfPoint2f(corners);
-        Point[] dstPts = {new Point(0,0), new Point(5.18,0), new Point(5.18,13.4), new Point(0,13.4)};
-        MatOfPoint2f dst = new MatOfPoint2f(dstPts);
-
-        Mat H = Calib3d.findHomography(src, dst, Calib3d.RANSAC, 3.0);
-        if (H == null || H.empty()) return r;
-
-        r.homography = H;
-        Mat Hinv = new Mat();
-        Core.invert(H, Hinv);
-        r.homographyInv = Hinv;
-        r.pxPerMeter = 5.18 / Math.max(1, Math.hypot(tr.x - tl.x, tr.y - tl.y));
-
-        r.ok = true;
-
-        // Step5: 绘制叠加帧（黄色场地网格）
-        r.overlayFrame = drawCourtOverlay(frame.clone(), H);
         return r;
     }
 

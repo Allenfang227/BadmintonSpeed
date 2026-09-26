@@ -245,8 +245,8 @@ public class UploadFragment extends Fragment implements DetectPipeline.ProgressC
         if (report.errors.isEmpty()) {
             msg.append("✅ 校验通过，可以开始测速");
             btnStartAnalyze.setEnabled(true);
-            // 更新算法模块状态（场地/羽毛球/击球点/球速 变成可检测）
-            for (int i = 0; i < 4; i++) adapter.updateStatus(adapter.items.get(i).title, "就绪");
+            // 更新算法模块状态（全部5个模块变成可检测）
+            for (int i = 0; i < adapter.items.size(); i++) adapter.updateStatus(adapter.items.get(i).title, "就绪");
             progressMain.setProgress(100);
             tvProgressPct.setText("100%");
             tvProgressLabel.setText("前置校验完成");
@@ -313,12 +313,22 @@ public class UploadFragment extends Fragment implements DetectPipeline.ProgressC
         bottomProgress.setVisibility(View.VISIBLE);
 
         pipeline = new DetectPipeline();
+        pipeline.setContext(requireContext());
         new Thread(() -> {
             DetectPipeline.PipelineResult result = pipeline.run(currentVideoPath, this);
             requireActivity().runOnUiThread(() -> {
                 isAnalyzing = false;
                 bottomProgress.setVisibility(View.GONE);
-                showResultAndSave(result);
+                btnStartAnalyze.setEnabled(true);
+                if (result.success) {
+                    showResultAndSave(result);
+                } else {
+                    // 检测失败，显示错误但保留视频路径，允许重试
+                    String msg = result.errorMessage != null ? result.errorMessage : "检测失败，请重试";
+                    Toast.makeText(requireContext(), msg, Toast.LENGTH_LONG).show();
+                    processingView.setVisibility(View.GONE);
+                    uploadPlaceholder.setVisibility(View.VISIBLE);
+                }
             });
         }).start();
     }
