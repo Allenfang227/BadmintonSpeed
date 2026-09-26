@@ -267,7 +267,15 @@ public class DetectPipeline {
             saveRecoveryState(videoPath, "计算球速");
             if (cb != null) { cb.onStageLabel("正在计算球速"); cb.onModuleProgress("计算球速", 30, "计算中 30%"); }
             Mat H = court != null ? court.homography : null;
-            List<Double> speedsKmH = speedCalc.computeSpeed(trajectory, (int) fps, H);
+            // 进入密集 native 调用前再次回收 native 堆，避免累积导致 SIGSEGV
+            System.gc();
+            List<Double> speedsKmH;
+            try {
+                speedsKmH = speedCalc.computeSpeed(trajectory, (int) fps, H);
+            } catch (Throwable t) {
+                Log.e(TAG, "computeSpeed failed, fallback to empty", t);
+                speedsKmH = new ArrayList<>();
+            }
             res.speedsKmH = speedsKmH;
             if (cb != null) cb.onModuleProgress("计算球速", 60, "计算中 60%");
 
@@ -276,11 +284,21 @@ public class DetectPipeline {
             for (int i = trajectory.size() - 1; i >= 0; i--) {
                 if (trajectory.get(i) != null) { finalPt = trajectory.get(i); break; }
             }
-            res.summary = speedCalc.summarize(speedsKmH, finalPt, H);
+            try {
+                res.summary = speedCalc.summarize(speedsKmH, finalPt, H);
+            } catch (Throwable t) {
+                Log.e(TAG, "summarize failed", t);
+                res.summary = new SpeedCalculator.Summary();
+            }
             if (cb != null) cb.onModuleProgress("计算球速", 80, "计算中 80%");
 
             // 3D 轨迹重建
-            res.trajectory3D = speedCalc.reconstruct3D(trajectory, H);
+            try {
+                res.trajectory3D = speedCalc.reconstruct3D(trajectory, H);
+            } catch (Throwable t) {
+                Log.e(TAG, "reconstruct3D failed", t);
+                res.trajectory3D = new ArrayList<>();
+            }
             res.success = true;
             if (cb != null) { cb.onModuleProgress("计算球速", 100, "通过 ✅"); cb.onDone(res); }
 

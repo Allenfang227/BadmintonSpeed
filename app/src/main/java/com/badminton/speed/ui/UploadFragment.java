@@ -405,30 +405,35 @@ public class UploadFragment extends Fragment implements DetectPipeline.ProgressC
     public void onModuleProgress(String moduleName, int pct, String status) {
         if (!isAdded()) return;
         requireActivity().runOnUiThread(() -> {
-            // 进度条
-            progressMain.setProgress(Math.min(100, Math.max(progressMain.getProgress(), pct)));
-            tvProgressPct.setText(pct + "%");
-            tvProgressLabel.setText("正在 " + moduleName);
-            // 更新算法模块列表状态
-            adapter.updateStatus(moduleName, status);
+            try {
+                progressMain.setProgress(Math.min(100, Math.max(progressMain.getProgress(), pct)));
+                tvProgressPct.setText(pct + "%");
+                tvProgressLabel.setText("正在 " + moduleName);
+                if (adapter != null) adapter.updateStatus(moduleName, status);
+            } catch (Throwable t) {
+                android.util.Log.w("UploadFragment", "onModuleProgress UI update failed: " + t.getMessage());
+            }
         });
     }
 
     @Override
     public void onStageLabel(String label) {
         if (!isAdded()) return;
-        requireActivity().runOnUiThread(() -> tvProgressLabel.setText(label));
+        requireActivity().runOnUiThread(() -> {
+            try { tvProgressLabel.setText(label); } catch (Throwable ignored) {}
+        });
     }
 
     @Override
     public void onFrameProcessed(int frameIndex, int totalFrames) {
         if (!isAdded()) return;
-        // 每 5% 更新一次
         if (frameIndex % Math.max(1, totalFrames / 20) != 0) return;
         int pct = 10 + (frameIndex * 80) / Math.max(1, totalFrames);
         requireActivity().runOnUiThread(() -> {
-            progressMain.setProgress(Math.min(100, pct));
-            tvProgressPct.setText(pct + "%");
+            try {
+                progressMain.setProgress(Math.min(100, pct));
+                tvProgressPct.setText(pct + "%");
+            } catch (Throwable ignored) {}
         });
     }
 
@@ -438,8 +443,28 @@ public class UploadFragment extends Fragment implements DetectPipeline.ProgressC
     @Override
     public void onError(String msg) {
         if (!isAdded()) return;
-        requireActivity().runOnUiThread(() ->
-                Toast.makeText(requireContext(), "测速错误: " + msg, Toast.LENGTH_LONG).show());
+        requireActivity().runOnUiThread(() -> {
+            try {
+                Toast.makeText(requireContext(), "测速错误: " + msg, Toast.LENGTH_LONG).show();
+            } catch (Throwable ignored) {}
+        });
+    }
+
+    @Override
+    public void onResume() {
+        super.onResume();
+        // 检查上次是否有闪退报告，有则弹窗展示
+        String crash = com.badminton.speed.CrashHandler.getLastCrash(requireContext());
+        if (crash != null) {
+            com.badminton.speed.CrashHandler.clearLastCrash(requireContext());
+            try {
+                new AlertDialog.Builder(requireContext())
+                        .setTitle("上次运行异常退出")
+                        .setMessage("检测到崩溃日志：\n\n" + crash)
+                        .setPositiveButton("知道了", null)
+                        .show();
+            } catch (Exception ignored) {}
+        }
     }
 
     @Override
