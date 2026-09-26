@@ -1,11 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
-<androidx.constraintlayout.widget.ConstraintLayout
+<ScrollView
     xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/bg_dark"
-    android:padding="24dp">
+    android:fillViewport="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="16dp">
 
     <!-- 顶部标题栏 -->
     <LinearLayout
@@ -13,18 +19,17 @@
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
-        android:gravity="center_vertical"
-        app:layout_constraintTop_toTopOf="parent">
+        android:gravity="center_vertical">
 
         <ImageView
             android:id="@+id/btn_menu"
-            android:layout_width="48dp"
-            android:layout_height="48dp"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
             android:src="@android:drawable/ic_menu_sort_by_size"
             android:contentDescription="menu"
             app:tint="@color/green_neon" />
 
-        <Space android:layout_width="16dp" android:layout_height="1dp" />
+        <Space android:layout_width="12dp" android:layout_height="1dp" />
 
         <TextView
             android:layout_width="0dp"
@@ -33,31 +38,26 @@
             android:gravity="center"
             android:text="@string/upload_title"
             android:textColor="@color/green_neon"
-            android:textSize="30sp"
+            android:textSize="24sp"
             android:textStyle="bold"
-            android:letterSpacing="0.15" />
+            android:letterSpacing="0.1" />
 
-        <Space android:layout_width="64dp" android:layout_height="1dp" />
+        <Space android:layout_width="52dp" android:layout_height="1dp" />
     </LinearLayout>
 
-    <!-- 主体双栏 -->
+    <!-- 主体：上下布局（手机竖屏适配） -->
     <LinearLayout
         android:id="@+id/main_body"
         android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_marginTop="24dp"
-        android:orientation="horizontal"
-        android:weightSum="2"
-        app:layout_constraintTop_toBottomOf="@id/top_bar"
-        app:layout_constraintBottom_toBottomOf="parent">
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:orientation="vertical">
 
-        <!-- ========== 左侧：上传 / 视频预览 面板 ========== -->
+        <!-- ========== 上部：上传 / 视频预览 面板 ========== -->
         <androidx.cardview.widget.CardView
             android:id="@+id/left_card"
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1.3"
-            android:layout_marginEnd="20dp"
+            android:layout_width="match_parent"
+            android:layout_height="320dp"
             app:cardBackgroundColor="@color/bg_card"
             app:cardCornerRadius="20dp"
             app:cardElevation="0dp">
@@ -73,16 +73,16 @@
                     android:layout_height="match_parent"
                     android:orientation="vertical"
                     android:gravity="center"
-                    android:padding="40dp">
+                    android:padding="24dp">
 
                     <!-- 大图标 -->
                     <ImageView
-                        android:layout_width="120dp"
-                        android:layout_height="120dp"
+                        android:layout_width="80dp"
+                        android:layout_height="80dp"
                         android:src="@android:drawable/ic_menu_upload"
                         app:tint="@color/green_neon" />
 
-                    <Space android:layout_width="1dp" android:layout_height="40dp" />
+                    <Space android:layout_width="1dp" android:layout_height="20dp" />
 
                     <!-- 三条提示文字 -->
                     <TextView
@@ -90,7 +90,7 @@
                         android:layout_height="wrap_content"
                         android:text="@string/upload_hint_1"
                         android:textColor="@color/green_bright"
-                        android:textSize="16sp"
+                        android:textSize="14sp"
                         android:gravity="center" />
 
                     <TextView
@@ -98,8 +98,8 @@
                         android:layout_height="wrap_content"
                         android:text="@string/upload_hint_2"
                         android:textColor="@color/green_bright"
-                        android:textSize="16sp"
-                        android:layout_marginTop="8dp"
+                        android:textSize="14sp"
+                        android:layout_marginTop="6dp"
                         android:gravity="center" />
 
                     <TextView
@@ -107,17 +107,17 @@
                         android:layout_height="wrap_content"
                         android:text="@string/upload_hint_3"
                         android:textColor="@color/green_bright"
-                        android:textSize="16sp"
-                        android:layout_marginTop="8dp"
+                        android:textSize="14sp"
+                        android:layout_marginTop="6dp"
                         android:gravity="center" />
 
-                    <Space android:layout_width="1dp" android:layout_height="60dp" />
+                    <Space android:layout_width="1dp" android:layout_height="24dp" />
 
                     <!-- 上传按钮 -->
                     <Button
                         android:id="@+id/btn_upload"
-                        android:layout_width="280dp"
-                        android:layout_height="64dp"
+                        android:layout_width="match_parent"
+                        android:layout_height="52dp"
                         android:text="@string/btn_upload_video"
                         style="@style/BtnGreenOutline" />
 
@@ -149,9 +149,9 @@
                         android:layout_height="wrap_content"
                         android:layout_gravity="bottom"
                         android:orientation="vertical"
-                        android:layout_margin="16dp"
+                        android:layout_margin="12dp"
                         android:background="#CC0A110D"
-                        android:padding="12dp">
+                        android:padding="10dp">
 
                         <LinearLayout
                             android:layout_width="match_parent"
@@ -166,7 +166,7 @@
                                 android:layout_weight="1"
                                 android:text="@string/progress_processing"
                                 android:textColor="@color/green_neon"
-                                android:textSize="14sp" />
+                                android:textSize="13sp" />
 
                             <TextView
                                 android:id="@+id/tv_progress_pct"
@@ -174,7 +174,7 @@
                                 android:layout_height="wrap_content"
                                 android:text="0%"
                                 android:textColor="@color/green_neon"
-                                android:textSize="20sp"
+                                android:textSize="18sp"
                                 android:textStyle="bold" />
                         </LinearLayout>
 
@@ -182,8 +182,8 @@
                             android:id="@+id/progress_main"
                             style="?android:attr/progressBarStyleHorizontal"
                             android:layout_width="match_parent"
-                            android:layout_height="8dp"
-                            android:layout_marginTop="8dp"
+                            android:layout_height="6dp"
+                            android:layout_marginTop="6dp"
                             android:max="100"
                             android:progress="0" />
                     </LinearLayout>
@@ -192,29 +192,28 @@
             </FrameLayout>
         </androidx.cardview.widget.CardView>
 
-        <!-- ========== 右侧：算法模块状态面板 ========== -->
+        <!-- ========== 下部：算法模块状态面板 ========== -->
         <LinearLayout
             android:id="@+id/right_panel"
-            android:layout_width="0dp"
-            android:layout_height="match_parent"
-            android:layout_weight="1"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
             android:orientation="vertical"
             android:background="@drawable/bg_panel"
-            android:padding="16dp">
+            android:layout_marginTop="12dp"
+            android:padding="12dp">
 
             <!-- 算法列表 -->
             <androidx.recyclerview.widget.RecyclerView
                 android:id="@+id/repo_algo_modules"
                 android:layout_width="match_parent"
-                android:layout_height="0dp"
-                android:layout_weight="1"
+                android:layout_height="wrap_content"
                 android:clipToPadding="false" />
 
             <!-- 开始测速按钮 -->
             <Button
                 android:id="@+id/btn_start_analyze"
                 android:layout_width="match_parent"
-                android:layout_height="72dp"
+                android:layout_height="52dp"
                 android:layout_marginTop="12dp"
                 android:text="▶  开始测速"
                 style="@style/BtnGreenOutline"
@@ -229,12 +228,12 @@
                 android:gravity="center_vertical"
                 android:layout_marginTop="8dp"
                 android:background="@drawable/bg_dark_card"
-                android:padding="12dp"
+                android:padding="10dp"
                 android:visibility="gone">
 
                 <ImageView
-                    android:layout_width="24dp"
-                    android:layout_height="24dp"
+                    android:layout_width="20dp"
+                    android:layout_height="20dp"
                     android:src="@android:drawable/ic_popup_sync"
                     app:tint="@color/green_neon" />
 
@@ -242,7 +241,7 @@
                     android:layout_width="0dp"
                     android:layout_height="wrap_content"
                     android:layout_weight="1"
-                    android:layout_marginStart="12dp"
+                    android:layout_marginStart="10dp"
                     android:orientation="vertical">
                     <TextView
                         android:id="@+id/tv_analyzing"
@@ -250,14 +249,14 @@
                         android:layout_height="wrap_content"
                         android:text="@string/progress_analyzing"
                         android:textColor="@color/green_neon"
-                        android:textSize="15sp"
+                        android:textSize="13sp"
                         android:textStyle="bold" />
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="@string/progress_estimated"
                         android:textColor="@color/text_secondary"
-                        android:textSize="11sp"
+                        android:textSize="10sp"
                         android:layout_marginTop="2dp" />
                 </LinearLayout>
 
@@ -265,7 +264,7 @@
                     android:id="@+id/btn_cancel"
                     style="@android:style/Widget.Button.Small"
                     android:layout_width="wrap_content"
-                    android:layout_height="36dp"
+                    android:layout_height="32dp"
                     android:text="@string/progress_cancel"
                     android:textColor="@color/red_alert" />
             </LinearLayout>
@@ -273,4 +272,5 @@
         </LinearLayout>
     </LinearLayout>
 
-</androidx.constraintlayout.widget.ConstraintLayout>
+    </LinearLayout>
+</ScrollView>

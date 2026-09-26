@@ -1,10 +1,110 @@
 <?xml version="1.0" encoding="utf-8"?>
-<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item>
-        <shape android:shape="oval">
-            <solid android:color="#39FF14"/>
-            <padding android:left="40dp" android:top="40dp" android:right="40dp" android:bottom="40dp"/>
-        </shape>
-    </item>
-    <item android:drawable="@android:drawable/ic_menu_upload"/>
-</layer-list>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- 外圈光晕 -->
+    <path
+        android:fillColor="#39FF14"
+        android:pathData="M54,18 m-36,0 a36,36 0 1,0 72,0 a36,36 0 1,0 -72,0"
+        android:strokeWidth="2"
+        android:strokeColor="#39FF14"
+        android:strokeAlpha="0.3"/>
+
+    <!-- 羽毛球软木底座（圆形） -->
+    <path
+        android:fillColor="#39FF14"
+        android:pathData="M54,72 m-14,0 a14,14 0 1,0 28,0 a14,14 0 1,0 -28,0"/>
+
+    <!-- 底座内圈高光 -->
+    <path
+        android:fillColor="#0A110D"
+        android:pathData="M54,72 m-8,0 a8,8 0 1,0 16,0 a8,8 0 1,0 -16,0"/>
+
+    <!-- 底座中心点 -->
+    <path
+        android:fillColor="#39FF14"
+        android:pathData="M54,72 m-3,0 a3,3 0 1,0 6,0 a3,3 0 1,0 -6,0"/>
+
+    <!-- 羽毛（从底座向上辐射的线条） -->
+    <!-- 左羽毛 -->
+    <path
+        android:strokeColor="#39FF14"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"
+        android:pathData="M44,62 L30,28"/>
+    <path
+        android:strokeColor="#39FF14"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:pathData="M40,60 L22,30"/>
+
+    <!-- 中左羽毛 -->
+    <path
+        android:strokeColor="#39FF14"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"
+        android:pathData="M49,60 L42,22"/>
+    <path
+        android:strokeColor="#39FF14"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:pathData="M46,59 L36,20"/>
+
+    <!-- 正中羽毛 -->
+    <path
+        android:strokeColor="#39FF14"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:pathData="M54,58 L54,18"/>
+    <path
+        android:strokeColor="#39FF14"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:pathData="M51,58 L48,16"/>
+    <path
+        android:strokeColor="#39FF14"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:pathData="M57,58 L60,16"/>
+
+    <!-- 中右羽毛 -->
+    <path
+        android:strokeColor="#39FF14"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"
+        android:pathData="M59,60 L66,22"/>
+    <path
+        android:strokeColor="#39FF14"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:pathData="M62,59 L72,20"/>
+
+    <!-- 右羽毛 -->
+    <path
+        android:strokeColor="#39FF14"
+        android:strokeWidth="2.5"
+        android:strokeLineCap="round"
+        android:pathData="M64,62 L78,28"/>
+    <path
+        android:strokeColor="#39FF14"
+        android:strokeWidth="2"
+        android:strokeLineCap="round"
+        android:pathData="M68,60 L86,30"/>
+
+    <!-- 速度弧线（表示测速） -->
+    <path
+        android:strokeColor="#00FF66"
+        android:strokeWidth="3"
+        android:strokeLineCap="round"
+        android:pathData="M28,50 A32,32 0 0 1 54,24"
+        android:fillColor="#00000000"/>
+
+    <!-- 速度箭头 -->
+    <path
+        android:fillColor="#00FF66"
+        android:pathData="M50,22 L58,22 L54,14 Z"/>
+
+</vector>
