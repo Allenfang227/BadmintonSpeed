@@ -160,48 +160,75 @@ public class DetectPipeline {
             res.court = court;
             if (cb != null) cb.onModuleProgress("场地基准检测", court != null ? 100 : 30, court != null ? "通过 ✅" : "警告⚠");
 
-            // ===== 阶段3: 羽毛球检测（抽帧处理，每3帧取1帧） =====
-            saveRecoveryState(videoPath, "羽毛球检测");
-            if (cb != null) { cb.onStageLabel("正在检测羽毛球"); cb.onModuleProgress("羽毛球检测", 10, "检测中 10%"); }
+            // ===== 阶段3+4: 羽毛球 + 人员检测（同一遍视频，只打开一次） =====
+            saveRecoveryState(videoPath, "羽毛球+人员检测");
+            if (cb != null) { cb.onStageLabel("正在检测羽毛球和人员"); cb.onModuleProgress("羽毛球检测", 10, "检测中 10%"); cb.onModuleProgress("人员检测", 0, "等待中"); }
             VideoCapture cap2 = new VideoCapture();
             cap2.open(videoPath);
             List<Point> trajectory = new ArrayList<>();
             List<Double> speedsPxSec = new ArrayList<>();
 
+            // 人员检测器（帧差法，不需要 HOG，不会 native 崩溃）
+            PlayerDetector playerDet = new PlayerDetector();
+            List<PlayerDetector.PlayerBox> allPlayers = new ArrayList<>();
+            int playerSampleCount = Math.min(30, totalFrames); // 前30帧做人员检测
+            boolean playerDone = false;
+
             Mat frame2 = new Mat();
             int processed = 0;
-            int FRAME_SKIP = 3; // 每3帧处理1帧，速度提升3倍
+            int FRAME_SKIP = 3; // 每3帧取1帧做羽毛球检测
             int frameIdx = 0;
+            int playerDoneCount = 0;
 
             while (!cancelled && cap2.read(frame2)) {
                 if (frame2.empty()) break;
                 frameIdx++;
-                if (frameIdx % FRAME_SKIP != 0) {
-                    frame2.release();
-                    continue;
+
+                // 人员检测：前 playerSampleCount 帧连续处理（帧差法需要连续帧）
+                if (!playerDone && frameIdx <= playerSampleCount) {
+                    try {
+                        List<PlayerDetector.PlayerBox> boxes = playerDet.detect(frame2);
+                        if (boxes != null && !boxes.isEmpty()) {
+                            allPlayers.addAll(boxes);
+                        }
+                    } catch (Throwable t) {
+                        Log.w(TAG, "Player detect frame " + frameIdx + " failed: " + t.getMessage());
+                    }
+                    playerDoneCount++;
+                    if (playerDoneCount >= playerSampleCount) {
+                        playerDone = true;
+                        playerDet.reset();
+                        if (cb != null) cb.onModuleProgress("人员检测", 100,
+                                allPlayers.isEmpty() ? "警告⚠" : "通过 ✅ (" + allPlayers.size() + ")");
+                    } else if (cb != null && playerDoneCount % 5 == 0) {
+                        int pct = playerDoneCount * 100 / playerSampleCount;
+                        cb.onModuleProgress("人员检测", Math.min(100, pct), "检测中 " + Math.min(100, pct) + "%");
+                    }
                 }
 
-                // 羽毛球检测
-                Point shuttlePt = null;
-                try {
-                    shuttlePt = shuttleDet.detect(frame2);
-                } catch (Throwable t) {
-                    Log.w(TAG, "Shuttle detect frame " + processed + " failed: " + t.getMessage());
+                // 羽毛球检测：每 FRAME_SKIP 帧处理一次
+                if (frameIdx % FRAME_SKIP == 0) {
+                    Point shuttlePt = null;
+                    try {
+                        shuttlePt = shuttleDet.detect(frame2);
+                    } catch (Throwable t) {
+                        Log.w(TAG, "Shuttle detect frame " + processed + " failed: " + t.getMessage());
+                    }
+                    trajectory.add(shuttlePt);
+
+                    if (cb != null && processed % 10 == 0) {
+                        cb.onFrameProcessed(processed, totalFrames / FRAME_SKIP);
+                        int pct = 10 + (processed * 70) / Math.max(1, totalFrames / FRAME_SKIP);
+                        cb.onModuleProgress("羽毛球检测", Math.min(99, pct), "检测中 " + Math.min(99, pct) + "%");
+                    }
+                    processed++;
                 }
-                trajectory.add(shuttlePt);
 
                 // 释放当前帧
                 frame2.release();
-
-                if (cb != null && processed % 10 == 0) {
-                    cb.onFrameProcessed(processed, totalFrames / FRAME_SKIP);
-                    int pct = 10 + (processed * 70) / Math.max(1, totalFrames / FRAME_SKIP);
-                    cb.onModuleProgress("羽毛球检测", Math.min(99, pct), "检测中 " + Math.min(99, pct) + "%");
-                }
-                processed++;
             }
             cap2.release();
-            Log.i(TAG, "Shuttle: processed " + processed + " frames, trajectory size=" + trajectory.size());
+            Log.i(TAG, "Processed " + processed + " shuttle frames, " + allPlayers.size() + " player boxes, trajectory=" + trajectory.size());
 
             // 计算帧间像素速度
             for (int i = 1; i < trajectory.size(); i++) {
@@ -213,45 +240,11 @@ public class DetectPipeline {
             }
 
             res.shuttleTrajectory = trajectory;
-            if (cb != null) cb.onModuleProgress("羽毛球检测", 100, "通过 ✅");
-
-            // ===== 阶段4: 人员检测（用已有的场地帧重新打开，快速抽样） =====
-            saveRecoveryState(videoPath, "人员检测");
-            if (cb != null) { cb.onStageLabel("正在检测人员"); cb.onModuleProgress("人员检测", 10, "检测中 10%"); }
-            PlayerDetector playerDet = new PlayerDetector();
-            List<PlayerDetector.PlayerBox> allPlayers = new ArrayList<>();
-            VideoCapture cap3 = new VideoCapture();
-            cap3.open(videoPath);
-            Mat frame3 = new Mat();
-            int playerFrameIdx = 0;
-            int playerSampleCount = Math.min(20, processed); // 只抽样20帧做人员检测
-            int playerStep = Math.max(1, totalFrames / playerSampleCount);
-            int playerDone = 0;
-
-            while (!cancelled && cap3.read(frame3) && playerDone < playerSampleCount) {
-                if (frame3.empty()) break;
-                playerFrameIdx++;
-                if (playerFrameIdx % playerStep != 0) {
-                    frame3.release();
-                    continue;
-                }
-                try {
-                    List<PlayerDetector.PlayerBox> boxes = playerDet.detect(frame3);
-                    if (boxes != null && !boxes.isEmpty()) {
-                        allPlayers.addAll(boxes);
-                    }
-                } catch (Throwable ignored) {}
-                frame3.release();
-                playerDone++;
-                if (cb != null) {
-                    int pct = playerDone * 100 / playerSampleCount;
-                    cb.onModuleProgress("人员检测", Math.min(100, pct), "检测中 " + Math.min(100, pct) + "%");
-                }
-            }
-            cap3.release();
             res.players = allPlayers;
-            if (cb != null) cb.onModuleProgress("人员检测", 100,
-                    allPlayers.isEmpty() ? "警告⚠" : "通过 ✅ (" + allPlayers.size() + ")");
+            if (cb != null) {
+                cb.onModuleProgress("羽毛球检测", 100, "通过 ✅");
+                if (!playerDone) cb.onModuleProgress("人员检测", 100, allPlayers.isEmpty() ? "警告⚠" : "通过 ✅");
+            }
 
             // ===== 阶段5: 击球点检测 =====
             saveRecoveryState(videoPath, "击球点检测");
