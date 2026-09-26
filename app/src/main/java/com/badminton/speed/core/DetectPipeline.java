@@ -58,6 +58,15 @@ public class DetectPipeline {
         void onFrameProcessed(int frameIndex, int totalFrames);
         void onDone(PipelineResult result);
         void onError(String msg);
+
+        /** 场地检测完成，传回场地四角（像素坐标）+ 单应矩阵，用于实时叠加绘制 */
+        default void onCourtDetected(Point[] corners, Mat homography) {}
+
+        /** 羽毛球轨迹更新（每处理一批帧回调一次，用于实时绘制） */
+        default void onShuttleTrajectory(List<Point> trajectory) {}
+
+        /** 人员检测完成，传回人员框 */
+        default void onPlayersDetected(List<PlayerDetector.PlayerBox> players) {}
     }
 
     private volatile boolean cancelled = false;
@@ -158,7 +167,13 @@ public class DetectPipeline {
             cap.release();
 
             res.court = court;
-            if (cb != null) cb.onModuleProgress("场地基准检测", court != null ? 100 : 30, court != null ? "通过 ✅" : "警告⚠");
+            if (cb != null) {
+                cb.onModuleProgress("场地基准检测", court != null ? 100 : 30, court != null ? "通过 ✅" : "警告⚠");
+                // 场地标定完成，实时把黄色场地线叠加到左栏视频
+                if (court != null && court.courtCorners != null) {
+                    cb.onCourtDetected(court.courtCorners, court.homography);
+                }
+            }
 
             // ===== 阶段3+4: 羽毛球 + 人员检测（同一遍视频，只打开一次） =====
             saveRecoveryState(videoPath, "羽毛球+人员检测");
@@ -252,6 +267,9 @@ public class DetectPipeline {
             if (cb != null) {
                 cb.onModuleProgress("羽毛球检测", 100, "通过 ✅");
                 if (!playerDone) cb.onModuleProgress("人员检测", 100, allPlayers.isEmpty() ? "警告⚠" : "通过 ✅");
+                // 实时回传轨迹和人员框，叠加到视频
+                cb.onShuttleTrajectory(trajectory);
+                cb.onPlayersDetected(allPlayers);
             }
 
             // ===== 阶段5: 击球点检测（纯 Java，单次计算，避免高频 UI 更新） =====

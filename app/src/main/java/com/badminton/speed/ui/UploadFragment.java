@@ -36,6 +36,7 @@ import androidx.recyclerview.widget.RecyclerView;
 import com.badminton.speed.MainActivity;
 import com.badminton.speed.R;
 import com.badminton.speed.core.DetectPipeline;
+import com.badminton.speed.core.PlayerDetector;
 import com.badminton.speed.core.VideoPreValidator;
 import com.badminton.speed.data.DetectResult;
 import com.badminton.speed.data.HistoryDB;
@@ -61,6 +62,7 @@ public class UploadFragment extends Fragment implements DetectPipeline.ProgressC
     private LinearLayout uploadPlaceholder, bottomProgress;
     private FrameLayout processingView;
     private SurfaceView videoPreview;
+    private OverlayView overlayView;
     private ProgressBar progressMain;
     private TextView tvProgressLabel, tvProgressPct, tvAnalyzing;
     private RecyclerView repoModules;
@@ -112,6 +114,7 @@ public class UploadFragment extends Fragment implements DetectPipeline.ProgressC
         uploadPlaceholder = v.findViewById(R.id.upload_placeholder);
         processingView = v.findViewById(R.id.processing_view);
         videoPreview = v.findViewById(R.id.video_preview);
+        overlayView = v.findViewById(R.id.overlay_view);
         bottomProgress = v.findViewById(R.id.bottom_progress);
         progressMain = v.findViewById(R.id.progress_main);
         tvProgressLabel = v.findViewById(R.id.tv_progress_label);
@@ -226,6 +229,10 @@ public class UploadFragment extends Fragment implements DetectPipeline.ProgressC
     }
 
     private void updateUIAfterValidate(VideoPreValidator.ValidationReport report) {
+        // 设置叠加层的视频帧尺寸（用于坐标缩放映射）
+        if (overlayView != null && report.width > 0 && report.height > 0) {
+            overlayView.setFrameSize(report.width, report.height);
+        }
         // 显示视频预览（第一帧）
         tryShowFirstFrame();
 
@@ -246,7 +253,7 @@ public class UploadFragment extends Fragment implements DetectPipeline.ProgressC
             msg.append("✅ 校验通过，可以开始测速");
             btnStartAnalyze.setEnabled(true);
             // 更新算法模块状态（全部5个模块变成可检测）
-            for (int i = 0; i < adapter.items.size(); i++) adapter.updateStatus(adapter.items.get(i).title, "就绪");
+            for (int i = 0; i < adapter.items.size(); i++) adapter.updateStatus(adapter.items.get(i).title, 0, "就绪");
             progressMain.setProgress(100);
             tvProgressPct.setText("100%");
             tvProgressLabel.setText("前置校验完成");
@@ -311,6 +318,7 @@ public class UploadFragment extends Fragment implements DetectPipeline.ProgressC
         uploadPlaceholder.setVisibility(View.GONE);
         processingView.setVisibility(View.VISIBLE);
         bottomProgress.setVisibility(View.VISIBLE);
+        if (overlayView != null) overlayView.clearOverlay();
 
         pipeline = new DetectPipeline();
         pipeline.setContext(requireContext());
@@ -409,7 +417,7 @@ public class UploadFragment extends Fragment implements DetectPipeline.ProgressC
                 progressMain.setProgress(Math.min(100, Math.max(progressMain.getProgress(), pct)));
                 tvProgressPct.setText(pct + "%");
                 tvProgressLabel.setText("正在 " + moduleName);
-                if (adapter != null) adapter.updateStatus(moduleName, status);
+                if (adapter != null) adapter.updateStatus(moduleName, pct, status);
             } catch (Throwable t) {
                 android.util.Log.w("UploadFragment", "onModuleProgress UI update failed: " + t.getMessage());
             }
@@ -447,6 +455,54 @@ public class UploadFragment extends Fragment implements DetectPipeline.ProgressC
             try {
                 Toast.makeText(requireContext(), "测速错误: " + msg, Toast.LENGTH_LONG).show();
             } catch (Throwable ignored) {}
+        });
+    }
+
+    // ===== 实时叠加回调 =====
+
+    @Override
+    public void onCourtDetected(org.opencv.core.Point[] corners, org.opencv.core.Mat homography) {
+        if (!isAdded() || overlayView == null) return;
+        requireActivity().runOnUiThread(() -> {
+            try {
+                overlayView.setCourt(corners, homography);
+            } catch (Throwable t) {
+                android.util.Log.w("UploadFragment", "onCourtDetected failed: " + t.getMessage());
+            }
+        });
+    }
+
+    @Override
+    public void onShuttleTrajectory(List<org.opencv.core.Point> trajectory) {
+        if (!isAdded() || overlayView == null) return;
+        requireActivity().runOnUiThread(() -> {
+            try {
+                overlayView.setTrajectory(trajectory);
+            } catch (Throwable t) {
+                android.util.Log.w("UploadFragment", "onShuttleTrajectory failed: " + t.getMessage());
+            }
+        });
+    }
+
+    @Override
+    public void onPlayersDetected(List<PlayerDetector.PlayerBox> players) {
+        if (!isAdded() || overlayView == null) return;
+        requireActivity().runOnUiThread(() -> {
+            try {
+                List<android.graphics.RectF> boxes = new java.util.ArrayList<>();
+                if (players != null) {
+                    for (PlayerDetector.PlayerBox pb : players) {
+                        if (pb != null && pb.rect != null) {
+                            boxes.add(new android.graphics.RectF(
+                                    pb.rect.x, pb.rect.y,
+                                    pb.rect.x + pb.rect.width, pb.rect.y + pb.rect.height));
+                        }
+                    }
+                }
+                overlayView.setPlayers(boxes);
+            } catch (Throwable t) {
+                android.util.Log.w("UploadFragment", "onPlayersDetected failed: " + t.getMessage());
+            }
         });
     }
 
