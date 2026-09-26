@@ -40,6 +40,7 @@ public class SpeedCalculator {
 
         for (int i = 0; i < trajectoryPx.size(); i++) {
             Point px = trajectoryPx.get(i);
+            if (px == null) { speeds.add(0.0); continue; }
             Point meters = courtH != null ? warpPoint(courtH, px) : null;
 
             if (meters == null && courtH == null) {
@@ -134,6 +135,7 @@ public class SpeedCalculator {
         List<double[]> out = new ArrayList<>();
         if (courtH == null) return out;
         for (Point p : trajectoryPx) {
+            if (p == null) continue;
             Point m = warpPoint(courtH, p);
             if (m == null) continue;
             out.add(new double[]{m.x, m.y, 0}); // z=0 平面

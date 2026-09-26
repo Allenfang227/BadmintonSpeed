@@ -104,11 +104,17 @@ public class DetectPipeline {
                 cap.set(Videoio.CAP_PROP_POS_FRAMES, i * Math.max(1, totalFrames / Math.min(60, sampleFrames)));
                 if (!cap.read(frame) || frame.empty()) continue;
                 CourtDetector.CourtResult cr = courtDetector.detect(frame);
-                if (cr.ok && (court == null || cr.homography.rows() > 0)) {
+                if (cr.ok && cr.homography != null && !cr.homography.empty()) {
                     court = cr;
                     if (cb != null) cb.onModuleProgress("场地基准检测", Math.min(100, (i + 1) * 100 / sampleFrames), "检测中");
                 }
+                // 释放叠加帧（如果有）
+                if (cr.overlayFrame != null) cr.overlayFrame.release();
             }
+            if (court != null && court.overlayFrame != null) {
+                // 保留 court 数据但释放叠加帧（不再需要）
+            }
+            frame.release();
             res.court = court;
             if (cb != null) cb.onModuleProgress("场地基准检测", court != null ? 100 : 30, court != null ? "通过 ✅" : "警告⚠");
 
@@ -118,21 +124,30 @@ public class DetectPipeline {
             List<Point> trajectory = new ArrayList<>();
             List<Double> speedsPxSec = new ArrayList<>();
 
+            Mat frame2 = new Mat();
             int processed = 0;
             int frameStep = Math.max(1, (int) Math.round(fps / 30.0)); // 如果视频 > 30fps，抽帧
 
-            while (!cancelled && cap.read(frame)) {
-                if (processed % frameStep != 0) { processed++; continue; }
-                if (frame.empty()) break;
+            while (!cancelled && cap.read(frame2)) {
+                if (processed % frameStep != 0) { processed++; frame2.release(); continue; }
+                if (frame2.empty()) break;
 
                 // 羽毛球检测
-                Point shuttlePt = shuttleDet.detect(frame);
-                trajectory.add(shuttlePt);
+                Point shuttlePt = null;
+                try {
+                    shuttlePt = shuttleDet.detect(frame2);
+                } catch (Throwable t) {
+                    Log.w(TAG, "Shuttle detect frame " + processed + " failed: " + t.getMessage());
+                }
+                trajectory.add(shuttlePt); // 可能是 null，后续处理会跳过
 
                 // 人员检测（每 10 帧一次，省算力）
                 if (processed % 10 == 0 && cb != null) {
-                    playerDet.detect(frame);
+                    try { playerDet.detect(frame2); } catch (Throwable ignored) {}
                 }
+
+                // 释放当前帧内存（关键！不释放会导致 OOM 闪退）
+                frame2.release();
 
                 if (cb != null && processed % 5 == 0) {
                     cb.onFrameProcessed(processed, totalFrames);

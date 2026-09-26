@@ -44,24 +44,34 @@ public class PlayerDetector {
         if (frame == null || frame.empty()) return result;
 
         Mat gray = new Mat();
-        Imgproc.cvtColor(frame, gray, Imgproc.COLOR_BGR2GRAY);
-        Imgproc.GaussianBlur(gray, gray, new Size(5, 5), 0);
-
-        // 多尺度检测
         MatOfRect rects = new MatOfRect();
-        hog.detectMultiScale(gray, rects, new MatOfDouble(), 0, new Size(8, 8), new Size(32, 32), 1.05, 2.0, false);
+        MatOfDouble weights = new MatOfDouble();
 
-        List<Rect> rectList = rects.toList();
-        // NMS（非极大值抑制）简化版：去掉重叠的框
-        List<Rect> filtered = nms(rectList, 0.3);
+        try {
+            Imgproc.cvtColor(frame, gray, Imgproc.COLOR_BGR2GRAY);
+            Imgproc.GaussianBlur(gray, gray, new Size(5, 5), 0);
 
-        int id = 0;
-        for (Rect r : filtered) {
-            PlayerBox pb = new PlayerBox();
-            pb.rect = r;
-            pb.confidence = 1.0; // HOG detectMultiScale 没有置信度
-            pb.id = id++;
-            result.add(pb);
+            // 多尺度检测
+            hog.detectMultiScale(gray, rects, weights, 0, new Size(8, 8), new Size(32, 32), 1.05, 2.0, false);
+
+            List<Rect> rectList = rects.toList();
+            // NMS（非极大值抑制）简化版：去掉重叠的框
+            List<Rect> filtered = nms(rectList, 0.3);
+
+            int id = 0;
+            for (Rect r : filtered) {
+                PlayerBox pb = new PlayerBox();
+                pb.rect = r;
+                pb.confidence = 1.0; // HOG detectMultiScale 没有置信度
+                pb.id = id++;
+                result.add(pb);
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "detect failed", e);
+        } finally {
+            gray.release();
+            rects.release();
+            weights.release();
         }
         return result;
     }

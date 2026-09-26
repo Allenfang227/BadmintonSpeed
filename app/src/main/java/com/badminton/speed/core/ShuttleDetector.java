@@ -2,17 +2,14 @@ package com.badminton.speed.core;
 
 import android.util.Log;
 
-import org.opencv.core.Core;
 import org.opencv.core.Mat;
 import org.opencv.core.MatOfPoint;
 import org.opencv.core.MatOfPoint2f;
 import org.opencv.core.Point;
-import org.opencv.core.Scalar;
 import org.opencv.core.Size;
 import org.opencv.imgproc.Imgproc;
 import org.opencv.video.BackgroundSubtractor;
 import org.opencv.video.Video;
-import org.opencv.videoio.VideoCapture;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -27,11 +24,19 @@ public class ShuttleDetector {
     private BackgroundSubtractor bs;
 
     public ShuttleDetector() {
-        this.bs = Video.createBackgroundSubtractorMOG2(500, 25, true);
+        try {
+            this.bs = Video.createBackgroundSubtractorMOG2(500, 25, true);
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to create BackgroundSubtractorMOG2", e);
+        }
     }
 
     public void reset() {
-        this.bs = Video.createBackgroundSubtractorMOG2(500, 25, true);
+        try {
+            this.bs = Video.createBackgroundSubtractorMOG2(500, 25, true);
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to reset BackgroundSubtractorMOG2", e);
+        }
     }
 
     /**
@@ -40,55 +45,98 @@ public class ShuttleDetector {
      */
     public Point detect(Mat frame) {
         if (frame == null || frame.empty()) return null;
+        if (bs == null) return detectFallback(frame);
 
         Mat mask = new Mat();
-        bs.apply(frame, mask, 0.002);
-
-        // 形态学开/闭运算去噪
-        Mat kernel = Imgproc.getStructuringElement(Imgproc.MORPH_ELLIPSE, new Size(5, 5));
-        Imgproc.morphologyEx(mask, mask, Imgproc.MORPH_OPEN, kernel);
-        Imgproc.morphologyEx(mask, mask, Imgproc.MORPH_CLOSE, kernel);
-
-        // 找轮廓
-        List<MatOfPoint> contours = new ArrayList<>();
+        Mat kernel = null;
         Mat hierarchy = new Mat();
-        Imgproc.findContours(mask, contours, hierarchy, Imgproc.RETR_EXTERNAL, Imgproc.CHAIN_APPROX_SIMPLE);
-
+        List<MatOfPoint> contours = new ArrayList<>();
         Point bestCenter = null;
-        double bestScore = -1;
 
-        for (MatOfPoint cnt : contours) {
-            double area = Imgproc.contourArea(cnt);
-            if (area < 10 || area > 500) continue; // 羽毛球面积通常 10~500 px
+        try {
+            bs.apply(frame, mask, 0.002);
 
-            MatOfPoint2f cnt2f = new MatOfPoint2f(cnt.toArray());
-            Point2f center = new Point2f();
-            float[] radius = new float[1];
-            Imgproc.minEnclosingCircle(cnt2f, center, radius);
+            // 形态学开/闭运算去噪
+            kernel = Imgproc.getStructuringElement(Imgproc.MORPH_ELLIPSE, new Size(5, 5));
+            Imgproc.morphologyEx(mask, mask, Imgproc.MORPH_OPEN, kernel);
+            Imgproc.morphologyEx(mask, mask, Imgproc.MORPH_CLOSE, kernel);
 
-            // 圆形度检查
-            double peri = Imgproc.arcLength(cnt2f, true);
-            if (peri < 0.1) continue;
-            double circularity = 4 * Math.PI * area / (peri * peri);
-            if (circularity < 0.4) continue;
+            // 找轮廓
+            Imgproc.findContours(mask, contours, hierarchy, Imgproc.RETR_EXTERNAL, Imgproc.CHAIN_APPROX_SIMPLE);
 
-            // 白色检查：在该位置采样原图像素
-            int cx = (int) center.x, cy = (int) center.y;
-            if (cx < 0 || cy < 0 || cx >= frame.cols() || cy >= frame.rows()) continue;
-            double[] bgr = frame.get(cy, cx);
-            if (bgr == null) continue;
-            double b = bgr[0], g = bgr[1], r = bgr[2];
-            double brightness = (b + g + r) / 3.0;
+            double bestScore = -1;
 
-            // 羽毛球通常是白色/浅色，亮度偏高
-            double score = circularity * brightness * area;
-            if (score > bestScore) {
-                bestScore = score;
-                bestCenter = new Point(center.x, center.y);
+            for (MatOfPoint cnt : contours) {
+                double area = Imgproc.contourArea(cnt);
+                if (area < 10 || area > 500) continue;
+
+                MatOfPoint2f cnt2f = new MatOfPoint2f(cnt.toArray());
+                Point center = new Point(0, 0);
+                float[] radius = new float[1];
+                try {
+                    Imgproc.minEnclosingCircle(cnt2f, center, radius);
+                } catch (Exception e) {
+                    cnt2f.release();
+                    continue;
+                }
+
+                // 圆形度检查
+                double peri = Imgproc.arcLength(cnt2f, true);
+                cnt2f.release();
+                if (peri < 0.1) continue;
+                double circularity = 4 * Math.PI * area / (peri * peri);
+                if (circularity < 0.4) continue;
+
+                // 白色检查：在该位置采样原图像素
+                int cx = (int) center.x, cy = (int) center.y;
+                if (cx < 0 || cy < 0 || cx >= frame.cols() || cy >= frame.rows()) continue;
+                double[] bgr = frame.get(cy, cx);
+                if (bgr == null) continue;
+                double b = bgr[0], g = bgr[1], r = bgr[2];
+                double brightness = (b + g + r) / 3.0;
+
+                // 羽毛球通常是白色/浅色，亮度偏高
+                double score = circularity * brightness * area;
+                if (score > bestScore) {
+                    bestScore = score;
+                    bestCenter = new Point(center.x, center.y);
+                }
             }
+
+        } catch (Exception e) {
+            Log.e(TAG, "detect failed", e);
+        } finally {
+            // 释放所有 Mat，防止内存泄漏
+            mask.release();
+            if (kernel != null) kernel.release();
+            hierarchy.release();
+            for (MatOfPoint c : contours) c.release();
         }
 
         return bestCenter;
+    }
+
+    /**
+     * 备选方案：用霍夫圆检测，不依赖背景差分。
+     */
+    private Point detectFallback(Mat frame) {
+        Mat gray = new Mat();
+        Mat circles = new Mat();
+        try {
+            Imgproc.cvtColor(frame, gray, Imgproc.COLOR_BGR2GRAY);
+            Imgproc.GaussianBlur(gray, gray, new Size(5, 5), 0);
+            Imgproc.HoughCircles(gray, circles, Imgproc.HOUGH_GRADIENT, 1, 5, 200, 25, 2, 15);
+            if (circles.empty()) return null;
+            double[] c = circles.get(0, 0);
+            if (c == null) return null;
+            return new Point(c[0], c[1]);
+        } catch (Exception e) {
+            Log.e(TAG, "detectFallback failed", e);
+            return null;
+        } finally {
+            gray.release();
+            circles.release();
+        }
     }
 
     /**
@@ -96,17 +144,17 @@ public class ShuttleDetector {
      */
     public Point detectHough(Mat gray) {
         Mat circles = new Mat();
-        Imgproc.HoughCircles(gray, circles, Imgproc.HOUGH_GRADIENT, 1, 5, 200, 25, 2, 15);
-        if (circles.empty()) return null;
-        double[] c = circles.get(0, 0);
-        if (c == null) return null;
-        return new Point(c[0], c[1]);
-    }
-
-    /** Point2f 兼容类。 */
-    public static class Point2f extends org.opencv.core.Point {
-        public float radius;
-        public Point2f() { super(0, 0); }
-        public Point2f(double x, double y) { super(x, y); }
+        try {
+            Imgproc.HoughCircles(gray, circles, Imgproc.HOUGH_GRADIENT, 1, 5, 200, 25, 2, 15);
+            if (circles.empty()) return null;
+            double[] c = circles.get(0, 0);
+            if (c == null) return null;
+            return new Point(c[0], c[1]);
+        } catch (Exception e) {
+            Log.e(TAG, "detectHough failed", e);
+            return null;
+        } finally {
+            circles.release();
+        }
     }
 }
