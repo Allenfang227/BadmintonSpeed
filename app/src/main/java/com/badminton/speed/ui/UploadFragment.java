@@ -146,19 +146,19 @@ public class UploadFragment extends Fragment implements DetectPipeline.ProgressC
         List<AlgoModuleAdapter.ModuleItem> items = new ArrayList<>();
         items.add(makeItem("场地基准检测", "场地线清晰可见，无场地线的视频不能测速",
                 new String[]{"Canny边缘检测", "霍夫直线变换", "RANSAC迭代拟合", "单应性矩阵计算"},
-                "未检测"));
+                "未检测", R.drawable.ic_module_court));
         items.add(makeItem("羽毛球检测", "确保视频中羽毛球拍摄清晰，不要和白色背景融合",
-                new String[]{"背景差分", "SVM分类"},
-                "未检测"));
+                new String[]{"背景差分", "轮廓检测", "圆形度筛选", "白色过滤"},
+                "未检测", R.drawable.ic_module_shuttle));
         items.add(makeItem("人员检测", "调整拍摄角度，确保人员尽量不要互相遮挡",
-                new String[]{"HOG特征提取", "区域扫描", "SVM判定", "人员ID赋值"},
-                "未检测"));
+                new String[]{"帧差计算", "运动区域提取", "轮廓筛选", "人员ID赋值"},
+                "未检测", R.drawable.ic_module_player));
         items.add(makeItem("击球点检测", "尽量确保羽毛球始终在画面内，不要飞出画面",
-                new String[]{"羽毛球定位", "光流追踪球拍", "距离极值检测", "击球类型检测"},
-                "未检测"));
+                new String[]{"速度极值分析", "击球时刻识别"},
+                "未检测", R.drawable.ic_module_hit));
         items.add(makeItem("计算球速", "切勿使用鱼眼镜头拍摄，画面畸变的视频无法测速",
-                new String[]{"连续帧坐标追踪", "单应性矩阵映射", "计算速度", "空间重建"},
-                "未检测"));
+                new String[]{"轨迹重建", "坐标转换", "速度计算"},
+                "未检测", R.drawable.ic_module_speed));
 
         adapter = new AlgoModuleAdapter(items);
         repoModules.setLayoutManager(new LinearLayoutManager(requireContext()));
@@ -167,9 +167,9 @@ public class UploadFragment extends Fragment implements DetectPipeline.ProgressC
         return v;
     }
 
-    private AlgoModuleAdapter.ModuleItem makeItem(String title, String desc, String[] sub, String status) {
+    private AlgoModuleAdapter.ModuleItem makeItem(String title, String desc, String[] sub, String status, int iconRes) {
         AlgoModuleAdapter.ModuleItem m = new AlgoModuleAdapter.ModuleItem();
-        m.title = title; m.desc = desc; m.subItems = sub; m.status = status;
+        m.title = title; m.desc = desc; m.subItems = sub; m.status = status; m.iconRes = iconRes;
         return m;
     }
 
@@ -485,7 +485,7 @@ public class UploadFragment extends Fragment implements DetectPipeline.ProgressC
     }
 
     @Override
-    public void onPlayersDetected(List<PlayerDetector.PlayerBox> players) {
+    public void onPlayersDetected(List<PlayerDetector.PlayerBox> players, int hitterIndex) {
         if (!isAdded() || overlayView == null) return;
         requireActivity().runOnUiThread(() -> {
             try {
@@ -499,9 +499,21 @@ public class UploadFragment extends Fragment implements DetectPipeline.ProgressC
                         }
                     }
                 }
-                overlayView.setPlayers(boxes);
+                overlayView.setPlayers(boxes, hitterIndex);
             } catch (Throwable t) {
                 android.util.Log.w("UploadFragment", "onPlayersDetected failed: " + t.getMessage());
+            }
+        });
+    }
+
+    @Override
+    public void onSubStep(String moduleName, int subIndex, int status) {
+        if (!isAdded() || adapter == null) return;
+        requireActivity().runOnUiThread(() -> {
+            try {
+                adapter.updateSubStatus(moduleName, subIndex, status);
+            } catch (Throwable t) {
+                android.util.Log.w("UploadFragment", "onSubStep failed: " + t.getMessage());
             }
         });
     }

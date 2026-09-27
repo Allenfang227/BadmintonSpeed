@@ -1,0 +1,17 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="#0A110D">
+    <!-- 速度：仪表盘 -->
+    <path
+        android:fillColor="#0A110D"
+        android:pathData="M12,3 C6.5,3 2,7.5 2,13 L4,13 C4,8.6 7.6,5 12,5 C16.4,5 20,8.6 20,13 L22,13 C22,7.5 17.5,3 12,3 Z" />
+    <path
+        android:fillColor="#0A110D"
+        android:pathData="M12,7 L12,12 L16,10 Z" />
+    <path
+        android:fillColor="#0A110D"
+        android:pathData="M12,18 C10.3,18 9,19.3 9,21 C9,22.7 10.3,24 12,24 C13.7,24 15,22.7 15,21 C15,19.3 13.7,18 12,18 Z" />
+</vector>

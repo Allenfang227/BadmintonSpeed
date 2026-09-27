@@ -1,0 +1,13 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24"
+    android:tint="#0A110D">
+    <!-- 羽毛球图标：球托 + 羽毛 -->
+    <path
+        android:fillColor="#0A110D"
+        android:pathData="M12,3 C10,3 8.5,4.5 8.5,6.5 C8.5,7.5 9,8.3 9.5,9 L9,11 L7,15 L6,21 L10,19 L12,21 L14,19 L18,21 L17,15 L15,11 L14.5,9 C15,8.3 15.5,7.5 15.5,6.5 C15.5,4.5 14,3 12,3 Z M9.5,9 L14.5,9"
+        android:strokeWidth="0.5"
+        android:strokeColor="#0A110D" />
+</vector>

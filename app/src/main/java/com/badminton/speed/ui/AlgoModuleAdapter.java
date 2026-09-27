@@ -34,6 +34,7 @@ public class AlgoModuleAdapter extends RecyclerView.Adapter<AlgoModuleAdapter.VH
         public int[] subStatuses;    // 与 subItems 一一对应
         public String status;        // "未检测" / "检测中 xx%" / "通过 ✅" / "未通过 ❌" / "警告⚠"
         public int progress;         // 0-100
+        public int iconRes;          // 模块图标资源
         public boolean expanded = true; // 默认展开
     }
 
@@ -62,6 +63,7 @@ public class AlgoModuleAdapter extends RecyclerView.Adapter<AlgoModuleAdapter.VH
     @Override
     public void onBindViewHolder(@NonNull VH h, int pos) {
         ModuleItem m = items.get(pos);
+        if (m.iconRes != 0) h.ivModuleIcon.setImageResource(m.iconRes);
         h.tvTitle.setText(m.title);
         h.tvDesc.setText(m.desc);
         h.tvStatus.setText(m.status);

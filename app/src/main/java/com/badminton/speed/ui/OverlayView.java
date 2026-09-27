@@ -29,6 +29,7 @@ public class OverlayView extends View {
     private Mat homography;            // 单应矩阵（图像→标准场地米制），用于画网格
     private List<Point> trajectory;    // 羽毛球轨迹点（视频帧像素坐标）
     private List<RectF> playerBoxes;   // 人员框（视频帧像素坐标）
+    private int hitterIndex = -1;      // 击球人员索引（黄色框），其余绿色框
 
     // 视频帧原始尺寸（用于坐标缩放）
     private int frameWidth = 0;
@@ -72,12 +73,12 @@ public class OverlayView extends View {
         ballPaint.setColor(Color.parseColor("#39FF14"));
         ballPaint.setStyle(Paint.Style.FILL);
 
-        // 人员框（青色）
-        playerPaint.setColor(Color.parseColor("#00E5FF"));
+        // 普通人员框（绿色）
+        playerPaint.setColor(Color.parseColor("#00FF66"));
         playerPaint.setStyle(Paint.Style.STROKE);
         playerPaint.setStrokeWidth(2f);
 
-        playerTextPaint.setColor(Color.parseColor("#00E5FF"));
+        playerTextPaint.setColor(Color.parseColor("#00FF66"));
         playerTextPaint.setTextSize(24f);
         playerTextPaint.setFakeBoldText(true);
 
@@ -104,9 +105,10 @@ public class OverlayView extends View {
         invalidate();
     }
 
-    /** 设置人员框 */
-    public void setPlayers(List<RectF> boxes) {
+    /** 设置人员框，hitterIndex 为击球人员索引（黄色框） */
+    public void setPlayers(List<RectF> boxes, int hitterIndex) {
         this.playerBoxes = boxes;
+        this.hitterIndex = hitterIndex;
         invalidate();
     }
 
@@ -258,16 +260,31 @@ public class OverlayView extends View {
 
     private void drawPlayers(Canvas canvas, float scale, float offsetX, float offsetY) {
         if (playerBoxes == null || playerBoxes.isEmpty()) return;
-        int id = 0;
-        for (RectF r : playerBoxes) {
+        for (int id = 0; id < playerBoxes.size(); id++) {
+            RectF r = playerBoxes.get(id);
             if (r == null) continue;
             float left = r.left * scale + offsetX;
             float top = r.top * scale + offsetY;
             float right = r.right * scale + offsetX;
             float bottom = r.bottom * scale + offsetY;
-            canvas.drawRect(left, top, right, bottom, playerPaint);
-            canvas.drawText("P" + id, left, top - 4f, playerTextPaint);
-            id++;
+
+            boolean isHitter = (id == hitterIndex);
+            if (isHitter) {
+                // 击球人员：黄色粗框
+                playerPaint.setColor(Color.YELLOW);
+                playerPaint.setStrokeWidth(4f);
+                playerTextPaint.setColor(Color.YELLOW);
+                canvas.drawRect(left, top, right, bottom, playerPaint);
+                canvas.drawText("击球人", left, top - 6f, playerTextPaint);
+                // 恢复普通样式
+                playerPaint.setColor(Color.parseColor("#00FF66"));
+                playerPaint.setStrokeWidth(2f);
+                playerTextPaint.setColor(Color.parseColor("#00FF66"));
+            } else {
+                // 普通人员：绿色框
+                canvas.drawRect(left, top, right, bottom, playerPaint);
+                canvas.drawText("P" + id, left, top - 4f, playerTextPaint);
+            }
         }
     }
 
