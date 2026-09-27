@@ -96,18 +96,31 @@ public class AlgoModuleAdapter extends RecyclerView.Adapter<AlgoModuleAdapter.VH
             notifyItemChanged(pos);
         });
 
-        // 动态渲染子步骤行
+        // 动态渲染子步骤行（只在首次创建时建视图，后续只更新图标颜色）
         renderSubItems(h, m);
     }
 
     private void renderSubItems(VH h, ModuleItem m) {
-        h.subContainer.removeAllViews();
-        if (m.subItems == null || m.subItems.length == 0) return;
+        // 如果子项视图已经创建过且数量匹配，只更新状态，不重建
+        if (h.subIcons != null && h.subIcons.length == (m.subItems != null ? m.subItems.length : 0)) {
+            updateSubItemStatuses(h, m);
+            return;
+        }
 
-        // 两列显示子项（横屏空间足够）
+        h.subContainer.removeAllViews();
+        if (m.subItems == null || m.subItems.length == 0) {
+            h.subIcons = null;
+            h.subTexts = null;
+            return;
+        }
+
+        int n = m.subItems.length;
+        h.subIcons = new ImageView[n];
+        h.subTexts = new TextView[n];
+
         int cols = 2;
         LinearLayout rowLayout = null;
-        for (int i = 0; i < m.subItems.length; i++) {
+        for (int i = 0; i < n; i++) {
             if (i % cols == 0) {
                 rowLayout = new LinearLayout(h.subContainer.getContext());
                 rowLayout.setOrientation(LinearLayout.HORIZONTAL);
@@ -117,7 +130,6 @@ public class AlgoModuleAdapter extends RecyclerView.Adapter<AlgoModuleAdapter.VH
                 h.subContainer.addView(rowLayout);
             }
 
-            // 每个子项：图标 + 文字
             LinearLayout item = new LinearLayout(h.subContainer.getContext());
             item.setOrientation(LinearLayout.HORIZONTAL);
             item.setGravity(android.view.Gravity.CENTER_VERTICAL);
@@ -129,60 +141,75 @@ public class AlgoModuleAdapter extends RecyclerView.Adapter<AlgoModuleAdapter.VH
             ImageView icon = new ImageView(h.subContainer.getContext());
             int size = (int) (16 * h.subContainer.getResources().getDisplayMetrics().density);
             icon.setLayoutParams(new LinearLayout.LayoutParams(size, size));
-            int status = (m.subStatuses != null && i < m.subStatuses.length) ? m.subStatuses[i] : SUB_PENDING;
-            switch (status) {
-                case SUB_PASS:
-                    icon.setImageResource(android.R.drawable.checkbox_on_background);
-                    icon.setColorFilter(Color.parseColor("#39FF14"));
-                    break;
-                case SUB_FAIL:
-                    icon.setImageResource(android.R.drawable.ic_menu_close_clear_cancel);
-                    icon.setColorFilter(Color.parseColor("#FF4444"));
-                    break;
-                case SUB_RUNNING:
-                    icon.setImageResource(android.R.drawable.presence_online);
-                    icon.setColorFilter(Color.parseColor("#FFB020"));
-                    break;
-                default:
-                    icon.setImageResource(android.R.drawable.presence_invisible);
-                    icon.setColorFilter(Color.parseColor("#7A8A80"));
-                    break;
-            }
 
             TextView tv = new TextView(h.subContainer.getContext());
             tv.setText(m.subItems[i]);
             tv.setTextSize(11f);
-            tv.setTextColor(status == SUB_PASS ? Color.parseColor("#39FF14")
-                    : status == SUB_FAIL ? Color.parseColor("#FF4444")
-                    : status == SUB_RUNNING ? Color.parseColor("#FFB020")
-                    : Color.parseColor("#7A8A80"));
             tv.setPadding(8, 0, 0, 0);
+
+            h.subIcons[i] = icon;
+            h.subTexts[i] = tv;
 
             item.addView(icon);
             item.addView(tv);
             if (rowLayout != null) rowLayout.addView(item);
+        }
+
+        updateSubItemStatuses(h, m);
+    }
+
+    /** 只更新子项图标和颜色，不重建视图（避免高频 notifyItemChanged 卡死） */
+    private void updateSubItemStatuses(VH h, ModuleItem m) {
+        if (h.subIcons == null || m.subStatuses == null) return;
+        for (int i = 0; i < h.subIcons.length && i < m.subStatuses.length; i++) {
+            int status = m.subStatuses[i];
+            ImageView icon = h.subIcons[i];
+            TextView tv = h.subTexts[i];
+            switch (status) {
+                case SUB_PASS:
+                    icon.setImageResource(android.R.drawable.checkbox_on_background);
+                    icon.setColorFilter(Color.parseColor("#39FF14"));
+                    tv.setTextColor(Color.parseColor("#39FF14"));
+                    break;
+                case SUB_FAIL:
+                    icon.setImageResource(android.R.drawable.ic_menu_close_clear_cancel);
+                    icon.setColorFilter(Color.parseColor("#FF4444"));
+                    tv.setTextColor(Color.parseColor("#FF4444"));
+                    break;
+                case SUB_RUNNING:
+                    icon.setImageResource(android.R.drawable.presence_online);
+                    icon.setColorFilter(Color.parseColor("#FFB020"));
+                    tv.setTextColor(Color.parseColor("#FFB020"));
+                    break;
+                default:
+                    icon.setImageResource(android.R.drawable.presence_invisible);
+                    icon.setColorFilter(Color.parseColor("#7A8A80"));
+                    tv.setTextColor(Color.parseColor("#7A8A80"));
+                    break;
+            }
         }
     }
 
     @Override
     public int getItemCount() { return items.size(); }
 
-    /** 更新模块状态 + 进度，同时根据模块状态推断所有子步骤状态 */
+    /** 更新模块状态 + 进度。不覆盖子步骤状态（子步骤由 onSubStep 单独控制） */
     public void updateStatus(String title, int pct, String status) {
         for (int i = 0; i < items.size(); i++) {
             ModuleItem m = items.get(i);
             if (m.title.equals(title)) {
                 m.status = status;
                 m.progress = Math.max(0, Math.min(100, pct));
-                // 推断子步骤状态
-                int subState = SUB_PENDING;
-                if (status != null) {
-                    if (status.contains("通过")) subState = SUB_PASS;
-                    else if (status.contains("警告") || status.contains("未通过") || status.contains("❌")) subState = SUB_FAIL;
-                    else if (status.contains("检测中") || status.contains("进行")) subState = SUB_RUNNING;
-                }
+                // 模块通过/失败时，批量设置子步骤状态
                 if (m.subStatuses != null) {
-                    for (int j = 0; j < m.subStatuses.length; j++) m.subStatuses[j] = subState;
+                    int subState = -1; // -1 表示不修改
+                    if (status != null) {
+                        if (status.contains("通过")) subState = SUB_PASS;
+                        else if (status.contains("警告") || status.contains("未通过") || status.contains("❌")) subState = SUB_FAIL;
+                    }
+                    if (subState >= 0) {
+                        for (int j = 0; j < m.subStatuses.length; j++) m.subStatuses[j] = subState;
+                    }
                 }
                 notifyItemChanged(i);
                 return;
@@ -207,6 +234,9 @@ public class AlgoModuleAdapter extends RecyclerView.Adapter<AlgoModuleAdapter.VH
         TextView tvTitle, tvDesc, tvStatus;
         LinearLayout subContainer;
         android.widget.ProgressBar progressBar;
+        // 缓存子项视图引用，避免高频 notifyItemChanged 时 removeAllViews 重建
+        ImageView[] subIcons;
+        TextView[] subTexts;
 
         VH(View v) {
             super(v);

@@ -167,7 +167,7 @@ public class DetectPipeline {
                     court = cr;
                 }
                 if (cr.overlayFrame != null) cr.overlayFrame.release();
-                if (cb != null && (i + 1) % 8 == 0) {
+                if (cb != null && (i + 1) % 15 == 0) {
                     int pct = Math.min(95, (i + 1) * 100 / courtSample);
                     cb.onModuleProgress("场地基准检测", pct, "检测中 " + pct + "%");
                     // 子步骤推进：4个子步骤
@@ -221,7 +221,7 @@ public class DetectPipeline {
                     }
                     trajectory.add(shuttlePt);
 
-                    if (cb != null && processed % 10 == 0) {
+                    if (cb != null && processed % 20 == 0) {
                         cb.onFrameProcessed(processed, totalFrames / FRAME_SKIP);
                         int pct = 10 + (processed * 80) / Math.max(1, totalFrames / FRAME_SKIP);
                         cb.onModuleProgress("羽毛球检测", Math.min(95, pct), "检测中 " + Math.min(95, pct) + "%");
@@ -286,7 +286,7 @@ public class DetectPipeline {
                 } catch (Throwable t) {
                     Log.w(TAG, "Player detect frame " + pIdx + " failed: " + t.getMessage());
                 }
-                if (cb != null && pIdx % 8 == 0) {
+                if (cb != null && pIdx % 15 == 0) {
                     int pct = pIdx * 100 / playerSampleCount;
                     cb.onModuleProgress("人员检测", Math.min(95, pct), "检测中 " + Math.min(95, pct) + "%");
                     int step = Math.min(3, pIdx * 4 / playerSampleCount);

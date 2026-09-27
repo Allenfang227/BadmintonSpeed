@@ -72,24 +72,30 @@ public class CourtDetector {
         try {
             // Step0: 白色线过滤——只保留场地白线，避免识别绿色/蓝色地面
             Imgproc.cvtColor(workFrame, hsv, Imgproc.COLOR_BGR2HSV);
-            // 白色：低饱和度 + 高亮度
-            Core.inRange(hsv, new Scalar(0, 0, 180), new Scalar(180, 60, 255), whiteMask);
+            // 白色：放宽阈值，场地线可能偏黄/灰
+            Core.inRange(hsv, new Scalar(0, 0, 120), new Scalar(180, 80, 255), whiteMask);
             // 形态学开运算去噪点
             Mat k1 = Imgproc.getStructuringElement(Imgproc.MORPH_ELLIPSE, new Size(3, 3));
             Imgproc.morphologyEx(whiteMask, whiteMask, Imgproc.MORPH_OPEN, k1);
             k1.release();
 
             Imgproc.cvtColor(workFrame, gray, Imgproc.COLOR_BGR2GRAY);
-
-            // Step1: Canny 边缘检测（只在白色掩码区域）
             Imgproc.GaussianBlur(gray, gray, new Size(5, 5), 0);
             Imgproc.Canny(gray, edges, 50, 150, 3);
             // 与白色掩码相与，只保留白线上的边缘
             Core.bitwise_and(edges, whiteMask, edges);
 
-            // Step2: 霍夫直线检测（提高最小长度，减少杂线）
+            // Step2: 霍夫直线检测
             Imgproc.HoughLinesP(edges, lines, 1, Math.PI / 180,
                     60, 80, 15);
+
+            // 回退机制：白色过滤检测不到线，就回退到不过滤的全图边缘检测
+            if (lines.empty() || lines.rows() < 4) {
+                Log.i(TAG, "White mask found " + (lines.empty() ? 0 : lines.rows()) + " lines, fallback to full edge");
+                Imgproc.Canny(gray, edges, 50, 150, 3);
+                Imgproc.HoughLinesP(edges, lines, 1, Math.PI / 180,
+                        60, 60, 20);
+            }
 
             if (lines.empty()) return r;
 
