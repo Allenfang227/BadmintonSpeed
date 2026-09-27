@@ -89,15 +89,19 @@ public class PlayerDetector {
             int id = 0;
             for (MatOfPoint cnt : contours) {
                 double area = Imgproc.contourArea(cnt);
-                // 过滤太小和太大的区域
-                if (area < 200 || area > 50000) continue;
+                // 过滤太小（光影噪点）和太大（非人体）的区域
+                // 320px 宽度下，人员面积通常 > 800
+                if (area < 800 || area > 80000) continue;
 
                 // 获取边界矩形
                 Rect r = Imgproc.boundingRect(cnt);
 
+                // 人员至少 50px 高（320px 宽度下）
+                if (r.height < 50) continue;
+
                 // 过滤长宽比不合理区域（人员通常高 > 宽）
                 float ratio = (float) r.height / Math.max(1, r.width);
-                if (ratio < 0.5 || ratio > 5) continue;
+                if (ratio < 0.8 || ratio > 5) continue;
 
                 PlayerBox pb = new PlayerBox();
                 // 转回原始坐标
@@ -107,12 +111,12 @@ public class PlayerDetector {
                         (int) (r.width / scale),
                         (int) (r.height / scale)
                 );
-                pb.confidence = Math.min(1.0, area / 5000.0);
+                pb.confidence = Math.min(1.0, area / 10000.0);
                 pb.id = id++;
                 result.add(pb);
 
-                // 最多取 4 个人员
-                if (id >= 4) break;
+                // 每帧最多取 2 个人员（羽毛球场景通常 2 人）
+                if (id >= 2) break;
             }
 
             // 更新参考帧

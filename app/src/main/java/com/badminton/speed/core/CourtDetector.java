@@ -65,17 +65,30 @@ public class CourtDetector {
         Mat gray = new Mat();
         Mat edges = new Mat();
         Mat lines = new Mat();
+        Mat hsv = new Mat();
+        Mat whiteMask = new Mat();
 
         try {
+            // Step0: 白色线过滤——只保留场地白线，避免识别绿色/蓝色地面
+            Imgproc.cvtColor(workFrame, hsv, Imgproc.COLOR_BGR2HSV);
+            // 白色：低饱和度 + 高亮度
+            Core.inRange(hsv, new Scalar(0, 0, 180), new Scalar(180, 60, 255), whiteMask);
+            // 形态学开运算去噪点
+            Mat k1 = Imgproc.getStructuringElement(Imgproc.MORPH_ELLIPSE, new Size(3, 3));
+            Imgproc.morphologyEx(whiteMask, whiteMask, Imgproc.MORPH_OPEN, k1);
+            k1.release();
+
             Imgproc.cvtColor(workFrame, gray, Imgproc.COLOR_BGR2GRAY);
 
-            // Step1: Canny 边缘检测
+            // Step1: Canny 边缘检测（只在白色掩码区域）
             Imgproc.GaussianBlur(gray, gray, new Size(5, 5), 0);
             Imgproc.Canny(gray, edges, 50, 150, 3);
+            // 与白色掩码相与，只保留白线上的边缘
+            Core.bitwise_and(edges, whiteMask, edges);
 
-            // Step2: 霍夫直线检测
+            // Step2: 霍夫直线检测（提高最小长度，减少杂线）
             Imgproc.HoughLinesP(edges, lines, 1, Math.PI / 180,
-                    80, 60, 20);
+                    60, 80, 15);
 
             if (lines.empty()) return r;
 
@@ -136,6 +149,20 @@ public class CourtDetector {
             r.homographyInv = Hinv;
             r.pxPerMeter = 5.18 / Math.max(1, Math.hypot(tr.x - tl.x, tr.y - tl.y));
 
+            // 合理性校验：场地面积应占画面 10%~90%，长宽比接近 13.4:5.18≈2.59
+            double courtW = Math.hypot(tr.x - tl.x, tr.y - tl.y);
+            double courtH = Math.hypot(bl.x - tl.x, bl.y - tl.y);
+            double courtArea = courtW * courtH;
+            double frameArea = workFrame.cols() * workFrame.rows();
+            double areaRatio = courtArea / frameArea;
+            double aspect = courtH / Math.max(1, courtW);
+            if (areaRatio < 0.05 || areaRatio > 0.95 || aspect < 1.0 || aspect > 6.0) {
+                Log.w(TAG, "Court rejected: areaRatio=" + areaRatio + " aspect=" + aspect);
+                H.release();
+                Hinv.release();
+                return r;
+            }
+
             r.ok = true;
 
             // Step5: 绘制叠加帧
@@ -148,6 +175,8 @@ public class CourtDetector {
             gray.release();
             edges.release();
             lines.release();
+            hsv.release();
+            whiteMask.release();
         }
         return r;
     }

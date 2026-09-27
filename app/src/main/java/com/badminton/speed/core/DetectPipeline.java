@@ -267,7 +267,7 @@ public class DetectPipeline {
             }
             PlayerDetector playerDet = new PlayerDetector();
             List<PlayerDetector.PlayerBox> allPlayers = new ArrayList<>();
-            int playerSampleCount = Math.min(50, totalFrames);
+            int playerSampleCount = Math.min(40, totalFrames);
             VideoCapture cap3 = new VideoCapture();
             cap3.open(videoPath);
             Mat frame3 = new Mat();
@@ -278,18 +278,21 @@ public class DetectPipeline {
                 pIdx++;
                 try {
                     List<PlayerDetector.PlayerBox> boxes = playerDet.detect(frame3);
-                    if (boxes != null && !boxes.isEmpty()) allPlayers.addAll(boxes);
+                    if (boxes != null && !boxes.isEmpty()) {
+                        allPlayers.addAll(boxes);
+                        // 总人数超过 8 个就提前结束（避免累积过多导致内存问题）
+                        if (allPlayers.size() > 8) break;
+                    }
                 } catch (Throwable t) {
                     Log.w(TAG, "Player detect frame " + pIdx + " failed: " + t.getMessage());
                 }
-                if (cb != null && pIdx % 10 == 0) {
+                if (cb != null && pIdx % 8 == 0) {
                     int pct = pIdx * 100 / playerSampleCount;
                     cb.onModuleProgress("人员检测", Math.min(95, pct), "检测中 " + Math.min(95, pct) + "%");
-                    // 子步骤推进
                     int step = Math.min(3, pIdx * 4 / playerSampleCount);
                     for (int s = 0; s <= step; s++) {
-                        if (s < 3) cb.onSubStep("人员检测", s, 2); // 通过
-                        else cb.onSubStep("人员检测", s, 1); // 最后一步进行中
+                        if (s < 3) cb.onSubStep("人员检测", s, 2);
+                        else cb.onSubStep("人员检测", s, 1);
                     }
                 }
                 frame3.release();
@@ -402,12 +405,14 @@ public class DetectPipeline {
             for (PlayerDetector.PlayerBox r : result) {
                 double rx = r.rect.x + r.rect.width / 2.0;
                 double ry = r.rect.y + r.rect.height / 2.0;
-                // 中心点距离小于 50px 视为同一人
-                if (Math.hypot(cx - rx, cy - ry) < 50) { dup = true; break; }
+                // 中心点距离小于 100px（原始坐标）视为同一人
+                if (Math.hypot(cx - rx, cy - ry) < 100) { dup = true; break; }
             }
             if (!dup) {
                 b.id = result.size();
                 result.add(b);
+                // 最终最多保留 4 人
+                if (result.size() >= 4) break;
             }
         }
         return result;
