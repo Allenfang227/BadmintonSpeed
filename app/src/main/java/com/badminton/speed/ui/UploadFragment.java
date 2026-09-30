@@ -81,6 +81,12 @@ public class UploadFragment extends Fragment implements DetectPipeline.ProgressC
 
     // 轨迹数据传递（避免 Bundle 序列化大对象）
     static List<double[]> sharedTrajectory3D;
+    /** 全视频运动员框时间线 {frameIdx,x,y,w,h}，结果页播放视频时实时同步画框 */
+    public static List<double[]> sharedPlayerTrack;
+    /** 2D 羽毛球轨迹（视频帧像素坐标），结果页叠加显示 */
+    public static List<org.opencv.core.Point> sharedTrajectory2D;
+    /** 场地四角（视频帧像素坐标），结果页画黄色场地框 */
+    public static org.opencv.core.Point[] sharedCourtCorners;
 
     // ActivityResultLaunchers
     private final ActivityResultLauncher<String> pickVideoLauncher =
@@ -392,10 +398,14 @@ public class UploadFragment extends Fragment implements DetectPipeline.ProgressC
             b.putString("videoPath", currentVideoPath);
             b.putBoolean("success", result.success);
             b.putString("error", result.errorMessage);
+            b.putDouble("fps", dr.fps > 0 ? dr.fps : 30);
             rf.setArguments(b);
 
-            // 传递轨迹
+            // 传递轨迹 + 实时追踪数据
             sharedTrajectory3D = result.trajectory3D;
+            sharedPlayerTrack = result.playerTrack;
+            sharedTrajectory2D = result.shuttleTrajectory;
+            sharedCourtCorners = result.court != null ? result.court.courtCorners : null;
 
             requireActivity().getSupportFragmentManager().beginTransaction()
                     .replace(R.id.main_container, rf)

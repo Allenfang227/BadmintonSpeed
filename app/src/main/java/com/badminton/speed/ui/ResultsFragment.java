@@ -39,6 +39,13 @@ public class ResultsFragment extends Fragment implements SurfaceHolder.Callback 
     private TrajectoryView trajectoryView;
     private TextView tvInout, tvLiveSpeed, tvPlayIcon;
     private SeekBar seekBar;
+    private OverlayView overlayView;
+
+    // 实时追踪数据（来自 UploadFragment 静态共享）
+    private List<double[]> playerTrack;
+    private List<org.opencv.core.Point> sceneTrajectory;
+    private org.opencv.core.Point[] courtCorners;
+    private double fps = 30;
 
     private final Handler uiHandler = new Handler(Looper.getMainLooper());
     private Runnable progressRunnable;
@@ -50,12 +57,26 @@ public class ResultsFragment extends Fragment implements SurfaceHolder.Callback 
 
     @Nullable
     @Override
-    public View onCreateView(@NonNull LayoutInflater infl, @Nullable ViewGroup c, @Nullable Bundle s) {
-        View v = infl.inflate(R.layout.fragment_results, c, false);
+    public View onCreateView(@NonNull LayoutInflater inflater, @Nullable ViewGroup c, @Nullable Bundle s) {
+        View v = inflater.inflate(R.layout.fragment_results, c, false);
 
         videoPath = getArguments() != null ? getArguments().getString("videoPath") : null;
         double maxSpeed = getArguments() != null ? getArguments().getDouble("maxSpeed", 0) : 0;
         String inOut = getArguments() != null ? getArguments().getString("inOut", "未知") : null;
+        fps = getArguments() != null ? getArguments().getDouble("fps", 30) : 30;
+        if (fps <= 0) fps = 30;
+
+        // 实时叠加层
+        overlayView = v.findViewById(R.id.overlay_view);
+        playerTrack = UploadFragment.sharedPlayerTrack;
+        sceneTrajectory = UploadFragment.sharedTrajectory2D;
+        courtCorners = UploadFragment.sharedCourtCorners;
+        if (overlayView != null && courtCorners != null) {
+            overlayView.setCourt(courtCorners, null);
+        }
+        if (overlayView != null && sceneTrajectory != null && !sceneTrajectory.isEmpty()) {
+            overlayView.setTrajectory(sceneTrajectory);
+        }
 
         // 视频播放
         surfaceView = v.findViewById(R.id.video_view);
@@ -128,7 +149,7 @@ public class ResultsFragment extends Fragment implements SurfaceHolder.Callback 
         seekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override public void onProgressChanged(SeekBar sb, int p, boolean fromUser) {
                 if (fromUser && mediaPlayer != null) {
-                    try { mediaPlayer.seekTo(p); } catch (Exception ignored) {}
+                    try { mediaPlayer.seekTo(p); syncOverlay(p); } catch (Exception ignored) {}
                 }
             }
             @Override public void onStartTrackingTouch(SeekBar sb) {}
@@ -176,10 +197,16 @@ public class ResultsFragment extends Fragment implements SurfaceHolder.Callback 
             }
             mediaPlayer.setDataSource(requireContext(), uri);
             mediaPlayer.setDisplay(holder);
+            // 等比缩放（letterbox），与 OverlayView 的坐标换算保持一致
+            try { mediaPlayer.setVideoScalingMode(MediaPlayer.VIDEO_SCALING_MODE_SCALE_TO_FIT); } catch (Exception ignored) {}
             mediaPlayer.prepareAsync();
             mediaPlayer.setOnPreparedListener(mp -> {
                 try {
                     if (seekBar != null) seekBar.setMax(mp.getDuration());
+                    if (overlayView != null) {
+                        overlayView.setFrameSize(mp.getVideoWidth(), mp.getVideoHeight());
+                        syncOverlay(0);
+                    }
                     mp.start();
                     isPlaying = true;
                     if (tvPlayIcon != null) tvPlayIcon.setText("⏸");
@@ -197,7 +224,7 @@ public class ResultsFragment extends Fragment implements SurfaceHolder.Callback 
         }
     }
 
-    /** 用 Handler 在主线程更新进度条（避免子线程操作 UI 闪退） */
+    /** 用 Handler 在主线程更新进度条 + 运动员框实时同步（避免子线程操作 UI 闪退） */
     private void startProgressLoop() {
         stopProgressLoop();
         progressRunnable = new Runnable() {
@@ -207,12 +234,37 @@ public class ResultsFragment extends Fragment implements SurfaceHolder.Callback 
                     try {
                         int cur = mediaPlayer.getCurrentPosition();
                         seekBar.setProgress(cur);
+                        syncOverlay(cur);
                     } catch (Exception ignored) {}
                     uiHandler.postDelayed(this, 100);
                 }
             }
         };
         uiHandler.postDelayed(progressRunnable, 100);
+    }
+
+    /** 按播放位置（毫秒）找到最近的追踪帧，把该帧的运动员框画到叠加层上 → 框随视频实时运动 */
+    private void syncOverlay(int posMs) {
+        if (overlayView == null || playerTrack == null || playerTrack.isEmpty()) return;
+        double targetFrame = posMs / 1000.0 * fps;
+
+        // 找最近帧
+        double nearest = Double.MAX_VALUE;
+        for (double[] e : playerTrack) {
+            double d = Math.abs(e[0] - targetFrame);
+            if (d < nearest) nearest = d;
+        }
+        if (nearest > 4) return; // 超过 4 帧没有追踪数据就不画，避免乱跳
+
+        List<android.graphics.RectF> boxes = new java.util.ArrayList<>();
+        for (double[] e : playerTrack) {
+            if (Math.abs(e[0] - targetFrame) <= 2) { // 相邻帧的框一起画，平滑过渡
+                boxes.add(new android.graphics.RectF(
+                        (float) e[1], (float) e[2],
+                        (float) (e[1] + e[3]), (float) (e[2] + e[4])));
+            }
+        }
+        overlayView.setPlayers(boxes, -1);
     }
 
     private void stopProgressLoop() {

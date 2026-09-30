@@ -146,6 +146,12 @@
         </LinearLayout>
     </FrameLayout>
 
+    <!-- 实时叠加层：黄线场地 + 运动员框随视频播放实时运动（不拦截触摸） -->
+    <com.badminton.speed.ui.OverlayView
+        android:id="@+id/overlay_view"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
     <!-- 底部控制栏 -->
     <LinearLayout
         android:layout_width="match_parent"

@@ -99,7 +99,7 @@ public class CourtDetector {
 
             if (lines.empty()) return r;
 
-            // Step3: 过滤直线
+            // Step2.5: 按方向分类直线
             List<double[]> hLines = new ArrayList<>();
             List<double[]> vLines = new ArrayList<>();
 
@@ -114,24 +114,26 @@ public class CourtDetector {
                     hLines.add(d);
                 } else if (angle > 60 && angle < 120) {
                     vLines.add(d);
+                } else {
+                    continue; // 斜线丢弃，避免噪声污染
                 }
             }
 
-            Point top = pickBoundary(hLines, true, true);
-            Point bottom = pickBoundary(hLines, true, false);
-            Point left = pickBoundary(vLines, false, true);
-            Point right = pickBoundary(vLines, false, false);
+            // Step3: 取 4 条边界完整线段（真实直线，非取点）
+            double[] topSeg = pickBoundary(hLines, true, true);
+            double[] bottomSeg = pickBoundary(hLines, true, false);
+            double[] leftSeg = pickBoundary(vLines, false, true);
+            double[] rightSeg = pickBoundary(vLines, false, false);
 
-            if (top == null || bottom == null || left == null || right == null) {
+            Point tl = lineIntersection(leftSeg, topSeg);
+            Point tr = lineIntersection(rightSeg, topSeg);
+            Point bl = lineIntersection(leftSeg, bottomSeg);
+            Point br = lineIntersection(rightSeg, bottomSeg);
+
+            if (tl == null || tr == null || bl == null || br == null) {
+                Log.i(TAG, "Court corner intersection failed");
                 return r;
             }
-
-            Point tl = intersection(left, top);
-            Point tr = intersection(right, top);
-            Point bl = intersection(left, bottom);
-            Point br = intersection(right, bottom);
-
-            if (tl == null || tr == null || bl == null || br == null) return r;
 
             // 转换回原始坐标
             Point[] corners = new Point[]{
@@ -142,38 +144,53 @@ public class CourtDetector {
             };
             r.courtCorners = corners;
 
-            // Step4: findHomography
-            MatOfPoint2f src = new MatOfPoint2f(corners);
-            Point[] dstPts = {new Point(0,0), new Point(5.18,0), new Point(5.18,13.4), new Point(0,13.4)};
-            MatOfPoint2f dst = new MatOfPoint2f(dstPts);
-
-            Mat H = Calib3d.findHomography(src, dst, Calib3d.RANSAC, 3.0);
-            if (H == null || H.empty()) return r;
-
-            r.homography = H;
-            Mat Hinv = new Mat();
-            Core.invert(H, Hinv);
-            r.homographyInv = Hinv;
-            r.pxPerMeter = 5.18 / Math.max(1, Math.hypot(tr.x - tl.x, tr.y - tl.y));
-
-            // 合理性校验：场地面积应占画面 10%~90%，长宽比接近 13.4:5.18≈2.59
+            // 合理性校验：角点必须在画面内附近，场地面积占比合理
+            double maxDim = Math.max(workFrame.cols(), workFrame.rows());
             double courtW = Math.hypot(tr.x - tl.x, tr.y - tl.y);
             double courtH = Math.hypot(bl.x - tl.x, bl.y - tl.y);
             double courtArea = courtW * courtH;
             double frameArea = workFrame.cols() * workFrame.rows();
             double areaRatio = courtArea / frameArea;
             double aspect = courtH / Math.max(1, courtW);
-            if (areaRatio < 0.05 || areaRatio > 0.95 || aspect < 1.0 || aspect > 6.0) {
+            if (areaRatio < 0.015 || areaRatio > 0.98 || aspect < 0.4 || aspect > 7.0) {
                 Log.w(TAG, "Court rejected: areaRatio=" + areaRatio + " aspect=" + aspect);
-                H.release();
-                Hinv.release();
+                return r;
+            }
+            for (Point c : corners) {
+                if (c.x < -maxDim || c.y < -maxDim || c.x > maxDim * 2 || c.y > maxDim * 2) {
+                    Log.w(TAG, "Corner out of range: " + c);
+                    return r;
+                }
+            }
+
+            // Step4: 4 点对应 → 直接解单应矩阵（确定性，不依赖 RANSAC 随机采样）
+            MatOfPoint2f src = new MatOfPoint2f(corners);
+            Point[] dstPts = {new Point(0,0), new Point(5.18,0), new Point(5.18,13.4), new Point(0,13.4)};
+            MatOfPoint2f dst = new MatOfPoint2f(dstPts);
+            Mat H;
+            try {
+                H = Imgproc.getPerspectiveTransform(src, dst);
+            } catch (Exception e) {
+                Log.e(TAG, "getPerspectiveTransform failed: " + e.getMessage());
+                src.release(); dst.release();
+                return r;
+            }
+            src.release(); dst.release();
+            if (H == null || H.empty() || H.rows() != 3 || H.cols() != 3) {
                 return r;
             }
 
-            r.ok = true;
+            r.homography = H;
+            Mat Hinv = new Mat();
+            Core.invert(H, Hinv);
+            if (Hinv.empty()) { H.release(); return r; }
+            r.homographyInv = Hinv;
+            r.pxPerMeter = 5.18 / Math.max(1, courtW);
 
-            // Step5: 绘制叠加帧
-            r.overlayFrame = drawCourtOverlay(frame.clone(), H);
+            // 不 clone 全尺寸 overlay 帧（每帧 clone 大 Mat 是 native OOM 闪退源），
+            // 黄色场地线由 OverlayView 用 corners + H 实时绘制。
+            r.overlayFrame = null;
+            r.ok = true;
 
         } catch (Exception e) {
             Log.e(TAG, "detect failed", e);
@@ -229,26 +246,30 @@ public class CourtDetector {
 
     // === 辅助 ===
 
-    private Point pickBoundary(List<double[]> lines, boolean horizontal, boolean min) {
+    /** 返回完整线段 {x1,y1,x2,y2}，按极值坐标筛选（min=true 取最小坐标端）。 */
+    private double[] pickBoundary(List<double[]> lines, boolean horizontal, boolean min) {
         if (lines.isEmpty()) return null;
-        Collections.sort(lines, (a, b) -> {
-            double v1 = horizontal ? (a[1] + a[3]) / 2.0 : (a[0] + a[2]) / 2.0;
-            double v2 = horizontal ? (b[1] + b[3]) / 2.0 : (b[0] + b[2]) / 2.0;
-            return Double.compare(v1, v2);
-        });
-        return horizontal
-                ? new Point(lines.get(min ? 0 : lines.size() - 1)[0],
-                           (lines.get(min ? 0 : lines.size() - 1)[1] +
-                            lines.get(min ? 0 : lines.size() - 1)[3]) / 2.0)
-                : new Point((lines.get(min ? 0 : lines.size() - 1)[0] +
-                             lines.get(min ? 0 : lines.size() - 1)[2]) / 2.0,
-                           lines.get(min ? 0 : lines.size() - 1)[1]);
+        double[] best = lines.get(0);
+        double bestV = horizontal ? (best[1] + best[3]) / 2.0 : (best[0] + best[2]) / 2.0;
+        for (int i = 1; i < lines.size(); i++) {
+            double[] d = lines.get(i);
+            double v = horizontal ? (d[1] + d[3]) / 2.0 : (d[0] + d[2]) / 2.0;
+            if (min ? v < bestV : v > bestV) { bestV = v; best = d; }
+        }
+        return best;
     }
 
-    private Point intersection(Point p1, Point p2) {
-        // 简化：取两条线段的平均中心点
-        if (p1 == null || p2 == null) return null;
-        return new Point((p1.x + p2.x) / 2, (p1.y + p2.y) / 2);
+    /** 两条无限直线的交点（真实几何求交，非取中点）。返回 null 表示平行。 */
+    private Point lineIntersection(double[] l1, double[] l2) {
+        if (l1 == null || l2 == null) return null;
+        double x1 = l1[0], y1 = l1[1], x2 = l1[2], y2 = l1[3];
+        double x3 = l2[0], y3 = l2[1], x4 = l2[2], y4 = l2[3];
+        double d = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
+        if (Math.abs(d) < 1e-6) return null;
+        double px = ((x1 * y2 - y1 * x2) * (x3 - x4) - (x1 - x2) * (x3 * y4 - y3 * x4)) / d;
+        double py = ((x1 * y2 - y1 * x2) * (y3 - y4) - (y1 - y2) * (x3 * y4 - y3 * x4)) / d;
+        if (Double.isNaN(px) || Double.isNaN(py) || Double.isInfinite(px) || Double.isInfinite(py)) return null;
+        return new Point(px, py);
     }
 
     /**

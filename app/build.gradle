@@ -8,8 +8,8 @@ android {
         applicationId "com.badminton.speed"
         minSdk 24
         targetSdk 34
-        versionCode 20
-        versionName "1ultimate"
+        versionCode 21
+        versionName "2ultimate"
     }
 
     signingConfigs {

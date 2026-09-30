@@ -47,6 +47,8 @@ public class DetectPipeline {
         public List<PlayerDetector.PlayerBox> players;
         public SpeedCalculator.Summary summary;
         public List<double[]> trajectory3D;
+        /** 全视频运动员追踪：每条 {frameIdx, x, y, w, h}，结果页按播放时间索引画框 */
+        public List<double[]> playerTrack;
         public boolean success = false;
         public String errorMessage;
         public String crashStage; // 崩溃时记录阶段
@@ -150,7 +152,7 @@ public class DetectPipeline {
             if (totalFrames <= 0) totalFrames = 300;
 
             // ===== 单遍视频遍历架构：全程只打开一次 VideoCapture =====
-            // 在同一遍读取中完成：场地检测(前30帧) + 人员检测(前40帧,静默) + 羽毛球检测(每3帧)。
+            // 在同一遍读取中完成：场地检测(前30帧) + 人员追踪(全视频每2帧) + 羽毛球检测(每3帧)。
             // 从根本上消除多次打开/关闭 VideoCapture 导致的 native SIGSEGV 闪退。
             saveRecoveryState(videoPath, "场地基准检测");
             if (cb != null) {
@@ -164,15 +166,16 @@ public class DetectPipeline {
             List<Double> speedsPxSec = new ArrayList<>();
 
             int courtSample = Math.min(totalFrames, 30);
-            int playerSample = Math.min(totalFrames, 40);
             int FRAME_SKIP = 3;
 
             CourtDetector.CourtResult court = null;
             Mat frame = new Mat();
             int frameIdx = 0;
             int processed = 0;
-            boolean courtDone = false, playerDone = false, shuttleAnnounced = false;
+            boolean courtDone = false, shuttleAnnounced = false;
+            List<double[]> playerTrack = new ArrayList<>(); // 每 2 帧记录运动员框，供结果页实时同步
 
+            try {
             while (!cancelled && cap.read(frame)) {
                 if (frame.empty()) break;
                 frameIdx++;
@@ -202,15 +205,21 @@ public class DetectPipeline {
                     }
                 }
 
-                // 人员检测：前 40 帧（静默执行，结果在羽毛球之后上报，保持界面顺序）
-                if (!playerDone && frameIdx <= playerSample) {
+                // 人员检测：全视频每 2 帧检测一次，记录运动员框时间线（随视频实时运动）
+                if (frameIdx % 2 == 0 && !cancelled) {
                     try {
                         List<PlayerDetector.PlayerBox> boxes = playerDet.detect(frame);
-                        if (boxes != null && !boxes.isEmpty()) allPlayers.addAll(boxes);
+                        if (boxes != null) {
+                            for (PlayerDetector.PlayerBox pb : boxes) {
+                                if (pb == null || pb.rect == null) continue;
+                                playerTrack.add(new double[]{
+                                        frameIdx, pb.rect.x, pb.rect.y, pb.rect.width, pb.rect.height});
+                            }
+                            allPlayers.addAll(boxes);
+                        }
                     } catch (Throwable t) {
                         Log.w(TAG, "Player detect frame " + frameIdx + " failed: " + t.getMessage());
                     }
-                    if (allPlayers.size() > 8 || frameIdx >= playerSample) playerDone = true;
                 }
 
                 // 羽毛球检测：每 3 帧取 1 帧
@@ -241,12 +250,15 @@ public class DetectPipeline {
                 // 每 30 帧回收一次 native 堆，保持内存稳定
                 if (frameIdx % 30 == 0) System.gc();
             }
-            // 单遍结束：一次性释放所有资源
-            frame.release();
-            cap.release();
-            try { shuttleDet.reset(); } catch (Throwable ignored) {}
-            try { playerDet.reset(); } catch (Throwable ignored) {}
-            System.gc();
+            } finally {
+                // 单遍结束：无论成功失败都释放 native 资源，防止泄漏累积导致闪退
+                frame.release();
+                cap.release();
+                try { shuttleDet.reset(); } catch (Throwable ignored) {}
+                try { playerDet.reset(); } catch (Throwable ignored) {}
+                System.gc();
+            }
+            res.playerTrack = playerTrack;
 
             // 场地结果上报
             res.court = court;

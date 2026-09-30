@@ -14,15 +14,15 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * 人员检测：用帧差法 + 运动轮廓代替 HOG（避免 native OOM 崩溃）。
- * 原理：连续两帧做差分 → 阈值二值化 → 找轮廓 → 按面积过滤为人员。
- * 优点：速度快 10 倍以上，内存占用极低，不会 native 崩溃。
+ * 人员检测：运行均值背景建模（不含 native 高斯模型，内存极低，不会 OOM 闪退）。
+ * 原理：背景 = 帧的指数滑动平均；当前帧 - 背景 = 运动前景 → 整身轮廓框。
+ * 对比帧间差分：可得到完整人体块（含静止时的身体），且对噪声更鲁棒。
  */
 public class PlayerDetector {
 
     private static final String TAG = "PlayerDetector";
-    private Mat prevFrame = null;
-    private boolean hasPrev = false;
+    private Mat bgModel = null;       // 运行均值背景
+    private boolean hasBg = false;
 
     public static class PlayerBox {
         public Rect rect;
@@ -31,19 +31,19 @@ public class PlayerDetector {
     }
 
     public PlayerDetector() {
-        // 无需初始化 HOG，避免 native 内存分配
+        // 无 native 资源，构造不会 OOM
     }
 
     /**
-     * 用帧差法检测运动人员。
+     * 用背景差分检测运动人员（整身框）。
      * @param frame 当前帧（BGR）
-     * @return 检测到的人员列表（运动区域边界框）
+     * @return 检测到的人员列表（最多 4 人）
      */
     public List<PlayerBox> detect(Mat frame) {
         List<PlayerBox> result = new ArrayList<>();
         if (frame == null || frame.empty()) return result;
 
-        // 缩放到 320px 宽度加速（避免 new Mat() 泄漏）
+        // 缩放到 320px 宽度加速
         Mat workFrame;
         double scale = 1.0;
         int targetW = 320;
@@ -61,25 +61,26 @@ public class PlayerDetector {
         List<MatOfPoint> contours = new ArrayList<>();
 
         try {
-            // 转灰度
+            // 转灰度 + 轻微模糊去噪
             Imgproc.cvtColor(workFrame, gray, Imgproc.COLOR_BGR2GRAY);
             Imgproc.GaussianBlur(gray, gray, new Size(3, 3), 0);
 
-            if (!hasPrev || prevFrame == null || prevFrame.empty()) {
-                // 第一帧，保存参考帧
-                prevFrame = gray.clone();
-                hasPrev = true;
+            if (!hasBg || bgModel == null || bgModel.empty()) {
+                // 首帧作为背景
+                bgModel = gray.clone();
+                hasBg = true;
                 return result;
             }
 
-            // 帧差：当前帧 - 上一帧
-            Core.absdiff(gray, prevFrame, mask);
+            // 背景慢速更新（alpha=3%），再差分 → 运动前景为整个身体
+            Core.addWeighted(bgModel, 0.97, gray, 0.03, 0, bgModel);
+            Core.absdiff(gray, bgModel, mask);
 
             // 阈值二值化
-            Imgproc.threshold(mask, mask, 25, 255, Imgproc.THRESH_BINARY);
+            Imgproc.threshold(mask, mask, 30, 255, Imgproc.THRESH_BINARY);
 
-            // 形态学膨胀连接运动区域
-            Mat kernel = Imgproc.getStructuringElement(Imgproc.MORPH_ELLIPSE, new Size(5, 5));
+            // 形态学膨胀连接身体部位
+            Mat kernel = Imgproc.getStructuringElement(Imgproc.MORPH_ELLIPSE, new Size(9, 9));
             Imgproc.dilate(mask, mask, kernel);
             kernel.release();
 
@@ -89,19 +90,17 @@ public class PlayerDetector {
             int id = 0;
             for (MatOfPoint cnt : contours) {
                 double area = Imgproc.contourArea(cnt);
-                // 过滤太小（光影噪点）和太大（非人体）的区域
-                // 320px 宽度下，人员面积通常 > 800
-                if (area < 800 || area > 80000) continue;
+                // 过滤光影噪点和超大区域（320px 宽度下整身面积通常 800~60000）
+                if (area < 600 || area > 60000) continue;
 
-                // 获取边界矩形
                 Rect r = Imgproc.boundingRect(cnt);
 
-                // 人员至少 50px 高（320px 宽度下）
-                if (r.height < 50) continue;
+                // 整身高度至少 40px
+                if (r.height < 40 || r.width < 25) continue;
 
-                // 过滤长宽比不合理区域（人员通常高 > 宽）
+                // 长宽比过滤（人体竖长，宽高比 0.2~1.6）
                 float ratio = (float) r.height / Math.max(1, r.width);
-                if (ratio < 0.8 || ratio > 5) continue;
+                if (ratio < 0.6 || ratio > 5) continue;
 
                 PlayerBox pb = new PlayerBox();
                 // 转回原始坐标
@@ -115,13 +114,9 @@ public class PlayerDetector {
                 pb.id = id++;
                 result.add(pb);
 
-                // 每帧最多取 2 个人员（羽毛球场景通常 2 人）
-                if (id >= 2) break;
+                // 羽毛球对局场景最多 4 人（双打）
+                if (id >= 4) break;
             }
-
-            // 更新参考帧
-            prevFrame.release();
-            prevFrame = gray.clone();
 
         } catch (Exception e) {
             Log.e(TAG, "detect failed", e);
@@ -137,10 +132,10 @@ public class PlayerDetector {
     }
 
     public void reset() {
-        hasPrev = false;
-        if (prevFrame != null) {
-            prevFrame.release();
-            prevFrame = null;
+        hasBg = false;
+        if (bgModel != null) {
+            bgModel.release();
+            bgModel = null;
         }
     }
 }
