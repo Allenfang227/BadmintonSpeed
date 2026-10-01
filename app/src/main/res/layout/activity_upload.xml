@@ -70,38 +70,59 @@
                     android:gravity="center"
                     android:padding="20dp">
 
-                    <ImageView
-                        android:layout_width="64dp"
-                        android:layout_height="64dp"
-                        android:src="@android:drawable/ic_menu_upload"
-                        app:tint="@color/green_neon" />
-
-                    <Space android:layout_width="1dp" android:layout_height="12dp" />
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="@string/upload_hint_1"
-                        android:textColor="@color/green_bright"
-                        android:textSize="13sp"
-                        android:gravity="center" />
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="@string/upload_hint_2"
-                        android:textColor="@color/green_bright"
-                        android:textSize="13sp"
-                        android:layout_marginTop="4dp"
-                        android:gravity="center" />
+                    <!-- 绿色圆形上传图标 -->
+                    <FrameLayout
+                        android:layout_width="84dp"
+                        android:layout_height="84dp"
+                        android:layout_gravity="center">
+                        <View
+                            android:layout_width="match_parent"
+                            android:layout_height="match_parent"
+                            android:background="@drawable/bg_play_circle" />
+                        <ImageView
+                            android:layout_width="48dp"
+                            android:layout_height="48dp"
+                            android:layout_gravity="center"
+                            android:src="@android:drawable/ic_menu_upload"
+                            app:tint="#0A110D" />
+                    </FrameLayout>
 
                     <Space android:layout_width="1dp" android:layout_height="16dp" />
 
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="不要使用广角、鱼眼镜头拍摄"
+                        android:textColor="@color/green_bright"
+                        android:textSize="14sp"
+                        android:gravity="center" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="推荐使用帧率30FPS的视频"
+                        android:textColor="@color/green_bright"
+                        android:textSize="14sp"
+                        android:layout_marginTop="2dp"
+                        android:gravity="center" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="慎用视频平台下载的被补帧、抽帧过的视频"
+                        android:textColor="@color/green_bright"
+                        android:textSize="14sp"
+                        android:layout_marginTop="2dp"
+                        android:gravity="center" />
+
+                    <Space android:layout_width="1dp" android:layout_height="24dp" />
+
                     <Button
                         android:id="@+id/btn_upload"
-                        android:layout_width="match_parent"
-                        android:layout_height="44dp"
+                        android:layout_width="280dp"
+                        android:layout_height="56dp"
                         android:text="@string/btn_upload_video"
+                        android:textSize="18sp"
                         style="@style/BtnGreenOutline" />
 
                 </LinearLayout>

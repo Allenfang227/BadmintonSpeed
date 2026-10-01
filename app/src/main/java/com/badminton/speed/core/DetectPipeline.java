@@ -371,30 +371,12 @@ public class DetectPipeline {
             }
             Log.i(TAG, "Player done: " + uniquePlayers.size() + " players, hitter=" + hitterIndex);
 
-            // ===== 阶段5: 击球点检测（纯 Java） =====
-            saveRecoveryState(videoPath, "击球点检测");
-            if (cb != null) {
-                cb.onStageLabel("正在检测击球点");
-                cb.onModuleProgress("击球点检测", 30, "检测中 30%");
-                cb.onSubStep("击球点检测", 0, 1); // 速度极值分析 进行中
-            }
-            HitDetector hitDet = new HitDetector();
-            if (cb != null) cb.onSubStep("击球点检测", 0, 2);
-            if (cb != null) { cb.onModuleProgress("击球点检测", 70, "检测中 70%"); cb.onSubStep("击球点检测", 1, 1); }
-            List<HitDetector.HitEvent> hits = hitDet.detect(trajectory, speedsPxSec);
-            res.hits = hits;
-            if (cb != null) {
-                cb.onSubStep("击球点检测", 1, 2);
-                cb.onModuleProgress("击球点检测", 100,
-                        hits.isEmpty() ? "警告⚠ 未检测到击球" : "通过 ✅ (" + hits.size() + ")");
-            }
-
-            // ===== 阶段6: 球速计算 =====
+            // ===== 阶段5/6: 球速计算 + 击球点检测（用 km/h 速度做峰值检测） =====
             saveRecoveryState(videoPath, "计算球速");
             if (cb != null) {
                 cb.onStageLabel("正在计算球速");
                 cb.onModuleProgress("计算球速", 20, "计算中 20%");
-                cb.onSubStep("计算球速", 0, 1); // 轨迹重建 进行中
+                cb.onSubStep("计算球速", 0, 1);
             }
             Mat H = court != null ? court.homography : null;
             System.gc();
@@ -406,15 +388,37 @@ public class DetectPipeline {
                 speedsKmH = new ArrayList<>();
             }
             res.speedsKmH = speedsKmH;
-            if (cb != null) { cb.onSubStep("计算球速", 0, 2); cb.onModuleProgress("计算球速", 50, "计算中 50%"); cb.onSubStep("计算球速", 1, 1); }
+            if (cb != null) { cb.onSubStep("计算球速", 0, 2); cb.onModuleProgress("计算球速", 50, "计算中 50%"); }
 
-            // 最终击球类型、界内界外判定
+            // 击球检测：每次击球 = 出拍速度（杀球）+ 落地点 + in/out + 击球类型
+            saveRecoveryState(videoPath, "击球点检测");
+            if (cb != null) {
+                cb.onStageLabel("正在检测击球点");
+                cb.onModuleProgress("击球点检测", 30, "检测中 30%");
+                cb.onSubStep("击球点检测", 0, 1);
+            }
+            HitDetector hitDet = new HitDetector();
+            List<HitDetector.HitEvent> hits;
+            try {
+                hits = hitDet.detect(trajectory, speedsKmH, H, (int) fps, SHUTTLE_SKIP);
+            } catch (Throwable t) {
+                Log.e(TAG, "hitDetect failed", t);
+                hits = new ArrayList<>();
+            }
+            res.hits = hits;
+            if (cb != null) {
+                cb.onSubStep("击球点检测", 0, 2);
+                cb.onModuleProgress("击球点检测", 100,
+                        hits.isEmpty() ? "警告⚠ 未检测到击球" : "通过 ✅ (" + hits.size() + "次击球)");
+            }
+
+            // 最终汇总（基于击球列表统计）
             Point finalPt = null;
             for (int i = trajectory.size() - 1; i >= 0; i--) {
                 if (trajectory.get(i) != null) { finalPt = trajectory.get(i); break; }
             }
             try {
-                res.summary = speedCalc.summarize(speedsKmH, finalPt, H);
+                res.summary = speedCalc.summarizeWithHits(speedsKmH, finalPt, H, hits);
             } catch (Throwable t) {
                 Log.e(TAG, "summarize failed", t);
                 res.summary = new SpeedCalculator.Summary();

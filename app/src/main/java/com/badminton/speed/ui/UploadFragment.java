@@ -87,6 +87,8 @@ public class UploadFragment extends Fragment implements DetectPipeline.ProgressC
     public static List<org.opencv.core.Point> sharedTrajectory2D;
     /** 场地四角（视频帧像素坐标），结果页画黄色场地框 */
     public static org.opencv.core.Point[] sharedCourtCorners;
+    /** 击球事件列表（每次击球的出拍速度/落地点/in/out），结果页展示 */
+    public static List<com.badminton.speed.core.HitDetector.HitEvent> sharedHits;
 
     // ActivityResultLaunchers
     private final ActivityResultLauncher<String> pickVideoLauncher =
@@ -406,6 +408,7 @@ public class UploadFragment extends Fragment implements DetectPipeline.ProgressC
             sharedPlayerTrack = result.playerTrack;
             sharedTrajectory2D = result.shuttleTrajectory;
             sharedCourtCorners = result.court != null ? result.court.courtCorners : null;
+            sharedHits = result.hits;
 
             requireActivity().getSupportFragmentManager().beginTransaction()
                     .replace(R.id.main_container, rf)

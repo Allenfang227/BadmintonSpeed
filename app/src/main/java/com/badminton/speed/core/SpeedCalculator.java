@@ -105,10 +105,52 @@ public class SpeedCalculator {
     }
 
     public static class Summary {
-        public double maxSpeed;
-        public double avgSpeed;
-        public String hitType;
-        public String inOut;
+        public double maxSpeed;        // 最高杀球速度 km/h
+        public double avgSpeed;        // 平均杀球速度 km/h
+        public String hitType;         // 最快速的击球类型
+        public String inOut;           // 最后一次落地的界内/界外
+        public int totalHits;          // 总击球数
+        public int inCount;            // 界内次数
+        public int outCount;           // 界外次数
+    }
+
+    /** 基于击球列表的汇总统计：最高/平均杀球速度、界内界外计数、总击球数。 */
+    public Summary summarizeWithHits(List<Double> speeds, Point finalShuttlePos, Mat courtH,
+                                     List<HitDetector.HitEvent> hits) {
+        Summary s = new Summary();
+        if (hits != null && !hits.isEmpty()) {
+            double max = 0, sum = 0;
+            String topType = "未知";
+            int inCnt = 0, outCnt = 0;
+            for (HitDetector.HitEvent h : hits) {
+                if (h.outSpeedKmH > max) {
+                    max = h.outSpeedKmH;
+                    topType = h.hitType;
+                }
+                sum += h.outSpeedKmH;
+                if (h.inOut != null && h.inOut.contains("界内")) inCnt++;
+                else if (h.inOut != null && h.inOut.contains("界外")) outCnt++;
+            }
+            s.maxSpeed = max;
+            s.avgSpeed = sum / hits.size();
+            s.hitType = topType;
+            s.totalHits = hits.size();
+            s.inCount = inCnt;
+            s.outCount = outCnt;
+            // 最后一次落地的 in/out
+            HitDetector.HitEvent last = hits.get(hits.size() - 1);
+            s.inOut = last.inOut;
+        } else {
+            // 回退：用瞬时速度统计
+            s.maxSpeed = 0; s.avgSpeed = 0;
+            if (speeds != null) {
+                for (Double v : speeds) if (v > s.maxSpeed) s.maxSpeed = v;
+            }
+            s.hitType = HitDetector.classifyHitType(s.maxSpeed);
+            s.inOut = judgeInOut(finalShuttlePos, courtH);
+            s.totalHits = 0;
+        }
+        return s;
     }
 
     /**
@@ -123,6 +165,11 @@ public class SpeedCalculator {
             return "界内 ✅";
         }
         return "界外 ❌";
+    }
+
+    /** 透视变换公开接口（供 HitDetector 等外部调用）。 */
+    public Point warpPointPublic(Mat H, Point p) {
+        return warpPoint(H, p);
     }
 
     private Point warpPoint(Mat H, Point p) {

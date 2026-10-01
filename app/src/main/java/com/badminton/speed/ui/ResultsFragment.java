@@ -40,11 +40,14 @@ public class ResultsFragment extends Fragment implements SurfaceHolder.Callback 
     private TextView tvInout, tvLiveSpeed, tvPlayIcon;
     private SeekBar seekBar;
     private OverlayView overlayView;
+    private TextView tvHitCount, tvInCount, tvOutCount;
+    private LinearLayout hitListContainer;
 
     // 实时追踪数据（来自 UploadFragment 静态共享）
     private List<double[]> playerTrack;
     private List<org.opencv.core.Point> sceneTrajectory;
     private org.opencv.core.Point[] courtCorners;
+    private List<com.badminton.speed.core.HitDetector.HitEvent> hits;
     private double fps = 30;
 
     private final Handler uiHandler = new Handler(Looper.getMainLooper());
@@ -91,9 +94,17 @@ public class ResultsFragment extends Fragment implements SurfaceHolder.Callback 
         trajectoryView = v.findViewById(R.id.trajectory_3d);
         tvInout = v.findViewById(R.id.tv_inout);
         tvLiveSpeed = v.findViewById(R.id.tv_live_speed);
+        tvHitCount = v.findViewById(R.id.tv_hit_count);
+        tvInCount = v.findViewById(R.id.tv_in_count);
+        tvOutCount = v.findViewById(R.id.tv_out_count);
+        hitListContainer = v.findViewById(R.id.hit_list_container);
 
         tvInout.setText(inOut != null && inOut.contains("界内") ? "IN" : (inOut != null && inOut.contains("界外") ? "OUT" : "—"));
         tvLiveSpeed.setText(maxSpeed > 0 ? (int) maxSpeed + "" : "—");
+
+        // 击球列表渲染：每次击球的杀球球速 + 落地点 in/out
+        hits = UploadFragment.sharedHits;
+        renderHitList();
 
         // 3D 轨迹
         List<double[]> traj = UploadFragment.sharedTrajectory3D;
@@ -157,6 +168,74 @@ public class ResultsFragment extends Fragment implements SurfaceHolder.Callback 
         });
 
         return v;
+    }
+
+    /** 渲染击球列表 + 统计：每次击球的杀球球速、击球类型、落地点 in/out。 */
+    private void renderHitList() {
+        if (hitListContainer == null) return;
+        hitListContainer.removeAllViews();
+        if (hits == null || hits.isEmpty()) {
+            TextView empty = new TextView(getContext());
+            empty.setText("未检测到击球");
+            empty.setTextColor(0xFF888888);
+            empty.setTextSize(11);
+            empty.setGravity(android.view.Gravity.CENTER);
+            hitListContainer.addView(empty);
+            if (tvHitCount != null) tvHitCount.setText("0 次");
+            if (tvInCount != null) tvInCount.setText("0");
+            if (tvOutCount != null) tvOutCount.setText("0");
+            return;
+        }
+        int inCnt = 0, outCnt = 0;
+        for (int i = 0; i < hits.size(); i++) {
+            com.badminton.speed.core.HitDetector.HitEvent h = hits.get(i);
+            boolean isIn = h.inOut != null && h.inOut.contains("界内");
+            boolean isOut = h.inOut != null && h.inOut.contains("界外");
+            if (isIn) inCnt++; else if (isOut) outCnt++;
+
+            LinearLayout row = new LinearLayout(getContext());
+            row.setOrientation(LinearLayout.HORIZONTAL);
+            row.setPadding(0, 4, 0, 4);
+            row.setBackgroundColor((i % 2 == 0) ? 0x11FFFFFF : 0x05FFFFFF);
+
+            // 序号
+            TextView tvIdx = new TextView(getContext());
+            tvIdx.setText("#" + (i + 1));
+            tvIdx.setTextColor(0xFFB0BEC5);
+            tvIdx.setTextSize(10);
+            tvIdx.setMinWidth(28);
+            row.addView(tvIdx);
+
+            // 击球类型
+            TextView tvType = new TextView(getContext());
+            tvType.setText(h.hitType != null ? h.hitType.split(" ")[0] : "—");
+            tvType.setTextColor(0xFF00E676);
+            tvType.setTextSize(10);
+            tvType.setMinWidth(54);
+            row.addView(tvType);
+
+            // 杀球球速
+            TextView tvSpd = new TextView(getContext());
+            tvSpd.setText((int) h.outSpeedKmH + "km/h");
+            tvSpd.setTextColor(0xFFFFFFFF);
+            tvSpd.setTextSize(11);
+            tvSpd.setTypeface(null, android.graphics.Typeface.BOLD);
+            tvSpd.setMinWidth(72);
+            row.addView(tvSpd);
+
+            // 落地点 in/out
+            TextView tvIo = new TextView(getContext());
+            tvIo.setText(isIn ? "IN" : (isOut ? "OUT" : "—"));
+            tvIo.setTextColor(isIn ? 0xFF4CAF50 : (isOut ? 0xFFF44336 : 0xFF888888));
+            tvIo.setTextSize(10);
+            tvIo.setTypeface(null, android.graphics.Typeface.BOLD);
+            row.addView(tvIo);
+
+            hitListContainer.addView(row);
+        }
+        if (tvHitCount != null) tvHitCount.setText(hits.size() + " 次");
+        if (tvInCount != null) tvInCount.setText(String.valueOf(inCnt));
+        if (tvOutCount != null) tvOutCount.setText(String.valueOf(outCnt));
     }
 
     private void togglePlay() {
