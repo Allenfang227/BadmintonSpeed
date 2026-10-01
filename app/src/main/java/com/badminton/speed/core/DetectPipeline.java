@@ -7,6 +7,8 @@ import android.util.Log;
 
 import org.opencv.core.Mat;
 import org.opencv.core.Point;
+import org.opencv.core.Size;
+import org.opencv.imgproc.Imgproc;
 import org.opencv.videoio.VideoCapture;
 
 import java.util.ArrayList;
@@ -81,6 +83,18 @@ public class DetectPipeline {
 
     public void setContext(Context ctx) { this.appContext = ctx; }
 
+    /** 【防闪退】低内存守卫：Java 堆剩余 <24MB 时返回 true，提示主循环优雅退出。 */
+    private boolean isLowMemory() {
+        try {
+            Runtime r = Runtime.getRuntime();
+            long used = r.totalMemory() - r.freeMemory();
+            long free = r.maxMemory() - used;
+            return free < 24L * 1024 * 1024;
+        } catch (Throwable t) {
+            return false;
+        }
+    }
+
     /** 保存崩溃恢复状态 */
     private void saveRecoveryState(String videoPath, String stage) {
         if (appContext == null) return;
@@ -151,9 +165,16 @@ public class DetectPipeline {
             int totalFrames = (int) Math.round(fps * (report.durationMs > 0 ? report.durationMs / 1000.0 : 10));
             if (totalFrames <= 0) totalFrames = 300;
 
-            // ===== 单遍视频遍历架构：全程只打开一次 VideoCapture =====
-            // 在同一遍读取中完成：场地检测(前30帧) + 人员追踪(全视频每2帧) + 羽毛球检测(每3帧)。
-            // 从根本上消除多次打开/关闭 VideoCapture 导致的 native SIGSEGV 闪退。
+            // 【防闪退 QoS】让解码器输出低分辨率帧（640px 宽）。多数硬解支持，
+            // 直接把每帧 native 内存从 ~6MB(1080p) 降到 ~0.7MB，从源头消除 native OOM/SIGSEGV。
+            try {
+                cap.set(Videoio.CAP_PROP_FRAME_WIDTH, 640);
+                cap.set(Videoio.CAP_PROP_FRAME_HEIGHT, 360);
+            } catch (Throwable ignored) {}
+
+            // ===== 单遍视频遍历架构（QoS batterySaver：降帧率 + 降分辨率 + 内存守卫） =====
+            // 全程只打开一次 VideoCapture；共享一个 480px 降采样帧供所有检测器复用，
+            // 杜绝每个检测器各自 resize/clone 全帧。这是 V2 仍闪退的根因治理。
             saveRecoveryState(videoPath, "场地基准检测");
             if (cb != null) {
                 cb.onStageLabel("正在检测场地线");
@@ -166,26 +187,59 @@ public class DetectPipeline {
             List<Double> speedsPxSec = new ArrayList<>();
 
             int courtSample = Math.min(totalFrames, 30);
-            int FRAME_SKIP = 3;
+            int SHUTTLE_SKIP = 4;   // 每 4 帧检测羽毛球（≈7.5fps，足够测速且减负一半）
+            int PLAYER_SKIP = 4;    // 每 4 帧检测人员（仍随视频运动，内存压力降一半）
+            int MAX_ANALYZE_FRAMES = 1200; // 帧数上限，避免长视频内存累积
 
             CourtDetector.CourtResult court = null;
-            Mat frame = new Mat();
+            Mat frame = new Mat();   // 原始读入帧（已被 CAP_PROP 降到 640px 或全分辨率）
+            Mat work = new Mat();    // 共享降采样帧（480px），所有检测器复用
             int frameIdx = 0;
             int processed = 0;
             boolean courtDone = false, shuttleAnnounced = false;
-            List<double[]> playerTrack = new ArrayList<>(); // 每 2 帧记录运动员框，供结果页实时同步
+            List<double[]> playerTrack = new ArrayList<>();
 
             try {
             while (!cancelled && cap.read(frame)) {
                 if (frame.empty()) break;
                 frameIdx++;
+                if (frameIdx > MAX_ANALYZE_FRAMES) {
+                    Log.i(TAG, "Hit MAX_ANALYZE_FRAMES cap, stopping at " + frameIdx);
+                    break;
+                }
 
-                // 场地检测：前 30 帧
+                // 【防闪退】低内存守卫：Java 堆剩余 <24MB 时优雅退出，
+                // 不让后续 native 操作触发无法捕获的 SIGSEGV。
+                if ((frameIdx & 15) == 0 && isLowMemory()) {
+                    Log.w(TAG, "Low memory at frame " + frameIdx + ", stopping gracefully");
+                    res.crashStage = "内存不足，已安全停止（请缩短视频）";
+                    if (cb != null) cb.onError("内存不足，已安全停止。请使用更短或更低分辨率的视频。");
+                    break;
+                }
+
+                // 共享降采样到 480px：所有检测器复用 work，坐标统一按 vx2wx 映射回视频坐标
+                double vx2wx = 1.0;
+                if (frame.cols() > 480) {
+                    double s = 480.0 / frame.cols();
+                    Imgproc.resize(frame, work, new Size(480, Math.max(1, Math.round(frame.rows() * s))));
+                    vx2wx = (double) frame.cols() / 480.0;
+                } else {
+                    frame.copyTo(work);
+                    vx2wx = 1.0;
+                }
+
+                // 场地检测：前 30 帧（用 work，角点按 vx2wx 映射回视频坐标）
                 if (!courtDone) {
                     if (frameIdx <= courtSample) {
                         try {
-                            CourtDetector.CourtResult cr = courtDetector.detect(frame);
-                            if (cr.ok && cr.homography != null && !cr.homography.empty()) court = cr;
+                            CourtDetector.CourtResult cr = courtDetector.detect(work);
+                            if (cr.ok && cr.homography != null && !cr.homography.empty()) {
+                                // 角点映射回视频坐标，供 OverlayView 在全分辨率视频上画黄线
+                                if (cr.courtCorners != null) {
+                                    for (Point c : cr.courtCorners) { c.x *= vx2wx; c.y *= vx2wx; }
+                                }
+                                court = cr;
+                            }
                             if (cr.overlayFrame != null) cr.overlayFrame.release();
                         } catch (Throwable t) {
                             Log.w(TAG, "Court detect frame " + frameIdx + " failed: " + t.getMessage());
@@ -205,13 +259,18 @@ public class DetectPipeline {
                     }
                 }
 
-                // 人员检测：全视频每 2 帧检测一次，记录运动员框时间线（随视频实时运动）
-                if (frameIdx % 2 == 0 && !cancelled) {
+                // 人员检测：每 4 帧，框按 vx2wx 映射回视频坐标（随视频实时运动）
+                if (frameIdx % PLAYER_SKIP == 0 && !cancelled) {
                     try {
-                        List<PlayerDetector.PlayerBox> boxes = playerDet.detect(frame);
+                        List<PlayerDetector.PlayerBox> boxes = playerDet.detect(work);
                         if (boxes != null) {
                             for (PlayerDetector.PlayerBox pb : boxes) {
                                 if (pb == null || pb.rect == null) continue;
+                                // 映射回视频坐标
+                                pb.rect.x = (int) (pb.rect.x * vx2wx);
+                                pb.rect.y = (int) (pb.rect.y * vx2wx);
+                                pb.rect.width = (int) (pb.rect.width * vx2wx);
+                                pb.rect.height = (int) (pb.rect.height * vx2wx);
                                 playerTrack.add(new double[]{
                                         frameIdx, pb.rect.x, pb.rect.y, pb.rect.width, pb.rect.height});
                             }
@@ -222,18 +281,21 @@ public class DetectPipeline {
                     }
                 }
 
-                // 羽毛球检测：每 3 帧取 1 帧
-                if (frameIdx % FRAME_SKIP == 0) {
+                // 羽毛球检测：每 4 帧，坐标按 vx2wx 映射回视频坐标
+                if (frameIdx % SHUTTLE_SKIP == 0) {
                     Point shuttlePt = null;
                     try {
-                        shuttlePt = shuttleDet.detect(frame);
+                        shuttlePt = shuttleDet.detect(work);
                     } catch (Throwable t) {
                         Log.w(TAG, "Shuttle detect frame " + processed + " failed: " + t.getMessage());
+                    }
+                    if (shuttlePt != null) {
+                        shuttlePt.x *= vx2wx;
+                        shuttlePt.y *= vx2wx;
                     }
                     trajectory.add(shuttlePt);
                     processed++;
 
-                    // 场地完成后才上报羽毛球进度（保持 UI 从上到下顺序）
                     if (courtDone && cb != null && processed % 20 == 0) {
                         if (!shuttleAnnounced) {
                             shuttleAnnounced = true;
@@ -241,18 +303,19 @@ public class DetectPipeline {
                             cb.onModuleProgress("羽毛球检测", 10, "检测中 10%");
                             cb.onSubStep("羽毛球检测", 0, 1);
                         }
-                        cb.onFrameProcessed(processed, totalFrames / FRAME_SKIP);
-                        int pct = 10 + (processed * 80) / Math.max(1, totalFrames / FRAME_SKIP);
+                        cb.onFrameProcessed(processed, totalFrames / SHUTTLE_SKIP);
+                        int pct = 10 + (processed * 80) / Math.max(1, totalFrames / SHUTTLE_SKIP);
                         cb.onModuleProgress("羽毛球检测", Math.min(95, pct), "检测中 " + Math.min(95, pct) + "%");
                     }
                 }
 
-                // 每 30 帧回收一次 native 堆，保持内存稳定
-                if (frameIdx % 30 == 0) System.gc();
+                // 每 20 帧回收一次 native 堆，保持内存稳定
+                if (frameIdx % 20 == 0) System.gc();
             }
             } finally {
                 // 单遍结束：无论成功失败都释放 native 资源，防止泄漏累积导致闪退
                 frame.release();
+                work.release();
                 cap.release();
                 try { shuttleDet.reset(); } catch (Throwable ignored) {}
                 try { playerDet.reset(); } catch (Throwable ignored) {}
@@ -281,7 +344,7 @@ public class DetectPipeline {
                 Point a = trajectory.get(i - 1);
                 Point b = trajectory.get(i);
                 double dist = Math.hypot(b.x - a.x, b.y - a.y);
-                speedsPxSec.add(dist * fps * FRAME_SKIP);
+                speedsPxSec.add(dist * fps * SHUTTLE_SKIP);
             }
             res.shuttleTrajectory = trajectory;
             if (cb != null) {
@@ -337,7 +400,7 @@ public class DetectPipeline {
             System.gc();
             List<Double> speedsKmH;
             try {
-                speedsKmH = speedCalc.computeSpeed(trajectory, (int) fps, H);
+                speedsKmH = speedCalc.computeSpeed(trajectory, (int) fps, SHUTTLE_SKIP, H);
             } catch (Throwable t) {
                 Log.e(TAG, "computeSpeed failed, fallback to empty", t);
                 speedsKmH = new ArrayList<>();

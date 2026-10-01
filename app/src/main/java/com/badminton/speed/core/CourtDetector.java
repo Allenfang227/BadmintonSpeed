@@ -164,8 +164,9 @@ public class CourtDetector {
             }
 
             // Step4: 4 点对应 → 直接解单应矩阵（确定性，不依赖 RANSAC 随机采样）
+            // 标准双打场地：6.10m × 13.40m（文档 StandardCourt）
             MatOfPoint2f src = new MatOfPoint2f(corners);
-            Point[] dstPts = {new Point(0,0), new Point(5.18,0), new Point(5.18,13.4), new Point(0,13.4)};
+            Point[] dstPts = {new Point(0,0), new Point(6.10,0), new Point(6.10,13.40), new Point(0,13.40)};
             MatOfPoint2f dst = new MatOfPoint2f(dstPts);
             Mat H;
             try {
@@ -185,7 +186,7 @@ public class CourtDetector {
             Core.invert(H, Hinv);
             if (Hinv.empty()) { H.release(); return r; }
             r.homographyInv = Hinv;
-            r.pxPerMeter = 5.18 / Math.max(1, courtW);
+            r.pxPerMeter = 6.10 / Math.max(1, courtW);
 
             // 不 clone 全尺寸 overlay 帧（每帧 clone 大 Mat 是 native OOM 闪退源），
             // 黄色场地线由 OverlayView 用 corners + H 实时绘制。

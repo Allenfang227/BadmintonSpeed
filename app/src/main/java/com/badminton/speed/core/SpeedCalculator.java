@@ -25,43 +25,59 @@ public class SpeedCalculator {
     private static final String TAG = "SpeedCalculator";
 
     /**
-     * 计算球速。
-     * @param trajectoryPx 每帧羽毛球像素坐标（要有至少 2 个点）
+     * 计算球速（含移动平均平滑，参考文档 SpeedCalculator）。
+     * @param trajectoryPx 每步羽毛球像素坐标（要有至少 2 个点）
      * @param fps 视频帧率
-     * @param courtH 场地单应矩阵（图像 → 标准场地坐标，单位：米），可为 null（用像素速度近似）
-     * @return 每帧速度列表 km/h
+     * @param frameStep 相邻轨迹点间隔的帧数（如每 4 帧采 1 点则传 4）
+     * @param courtH 场地单应矩阵（图像 → 标准场地坐标，单位：米），可为 null
+     * @return 每步速度列表 km/h（已平滑）
      */
-    public List<Double> computeSpeed(List<Point> trajectoryPx, int fps, Mat courtH) {
-        List<Double> speeds = new ArrayList<>();
-        if (trajectoryPx == null || trajectoryPx.size() < 2 || fps <= 0) return speeds;
+    public List<Double> computeSpeed(List<Point> trajectoryPx, int fps, int frameStep, Mat courtH) {
+        List<Double> raw = new ArrayList<>();
+        if (trajectoryPx == null || trajectoryPx.size() < 2 || fps <= 0) return raw;
+        if (frameStep < 1) frameStep = 1;
 
-        double dt = 1.0 / fps; // 秒
+        double dt = (double) frameStep / fps; // 相邻轨迹点的真实时间间隔（秒）
         Point prevMeters = null;
 
         for (int i = 0; i < trajectoryPx.size(); i++) {
             Point px = trajectoryPx.get(i);
-            if (px == null) { speeds.add(0.0); continue; }
+            if (px == null) { raw.add(0.0); prevMeters = null; continue; }
             Point meters = courtH != null ? warpPoint(courtH, px) : null;
 
             if (meters == null && courtH == null) {
                 // 退化：用像素速度，仅做相对比较
                 if (prevMeters != null) {
                     double distPx = Math.hypot(px.x - prevMeters.x, px.y - prevMeters.y);
-                    speeds.add(distPx / dt / 3.6); // px/s 近似
+                    raw.add(distPx / dt / 3.6); // px/s 近似
                 } else {
-                    speeds.add(0.0);
+                    raw.add(0.0);
                 }
             } else if (meters != null && prevMeters != null) {
                 double distM = Math.hypot(meters.x - prevMeters.x, meters.y - prevMeters.y);
                 double mPerSec = distM / dt;
-                double kmh = mPerSec * 3.6;
-                speeds.add(kmh);
+                raw.add(mPerSec * 3.6);
             } else {
-                speeds.add(0.0);
+                raw.add(0.0);
             }
             prevMeters = (meters != null) ? meters : px;
         }
-        return speeds;
+
+        // 移动平均平滑（窗口 5），减少抖动
+        return movingAverage(raw, 5);
+    }
+
+    /** 移动平均平滑，保留原长度（两端用可用窗口）。 */
+    private List<Double> movingAverage(List<Double> raw, int win) {
+        List<Double> out = new ArrayList<>(raw.size());
+        for (int i = 0; i < raw.size(); i++) {
+            double sum = 0; int n = 0;
+            for (int j = Math.max(0, i - win / 2); j <= Math.min(raw.size() - 1, i + win / 2); j++) {
+                sum += raw.get(j); n++;
+            }
+            out.add(n > 0 ? sum / n : 0.0);
+        }
+        return out;
     }
 
     /**
@@ -97,13 +113,13 @@ public class SpeedCalculator {
 
     /**
      * 判断球落点（或当前位置）是在界内还是界外。
-     * 标准单打场地：x ∈ [0, 5.18]，y ∈ [0, 13.4]（米）
+     * 标准双打场地：x ∈ [0, 6.10]，y ∈ [0, 13.40]（米）
      */
     public String judgeInOut(Point shuttlePx, Mat courtH) {
         if (shuttlePx == null || courtH == null) return "未知";
         Point m = warpPoint(courtH, shuttlePx);
         if (m == null) return "未知";
-        if (m.x >= -0.1 && m.x <= 5.18 + 0.1 && m.y >= -0.1 && m.y <= 13.4 + 0.1) {
+        if (m.x >= -0.1 && m.x <= 6.10 + 0.1 && m.y >= -0.1 && m.y <= 13.40 + 0.1) {
             return "界内 ✅";
         }
         return "界外 ❌";
