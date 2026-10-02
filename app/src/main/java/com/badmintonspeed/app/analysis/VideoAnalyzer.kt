@@ -192,10 +192,30 @@ class VideoAnalyzer {
         }
 
         if (courtCornersPx == null) {
-            // ABC 三套自动检测全部失败 → 请求用户手动标定（不直接报错，融合自 AI-YuJian-AI）
-            throw ManualCalibrationRequired(framesAll.first().bitmap.copy(Bitmap.Config.ARGB_8888, true))
+            // ABC 三套自动检测全部失败 → 尝试用"标定学习器"的历史先验（用户每次标定都被纳入学习容器，
+            // 同一机位下角点在画面中相对位置相似，可直接复用上次成功标定）
+            val learner = CourtLearner(context)
+            val predicted = learner.predict(w, h)
+            if (predicted != null && isValidPrediction(predicted, w, h)) {
+                courtCornersPx = predicted
+                anchorFrame = framesAll.first().bitmap
+                onStage(StageUpdate(AnalysisPhase.COURT, 2, 85f, 22f))
+                onStage(StageUpdate(AnalysisPhase.COURT, 3, 90f, 25f))
+                onStage(StageUpdate(AnalysisPhase.COURT, 3, 100f, 28f, done = true))
+                onPreviewFrame(anchorFrame.copy(Bitmap.Config.ARGB_8888, true))
+                delay(150)
+            } else {
+                // 历史先验也不可用 → 请求用户手动标定（不直接报错，融合自 AI-YuJian-AI）
+                throw ManualCalibrationRequired(framesAll.first().bitmap.copy(Bitmap.Config.ARGB_8888, true))
+            }
         }
         onStage(StageUpdate(AnalysisPhase.COURT, 3, 92f, 25f))
+        // 把本次成功标定纳入学习容器（提高下次自动识别精准度）
+        try {
+            CourtLearner(context).save(courtCornersPx, w, h)
+        } catch (e: Exception) {
+            // 学习容器写入失败不影响分析主流程
+        }
         val homography = Homography.compute(courtCornersPx, StandardCourt.corners)
         val court = CourtResult(courtCornersPx, homography)
         // 用 CourtMapper 透视变换画出完整标准场地线（融合自 AI-YuJian-AI：不只是4条外边，还包括中线/发球线/球网等）
@@ -230,13 +250,33 @@ class VideoAnalyzer {
         val rawPoints = ArrayList<BallPoint>()
         var lastBall: Pair<Float, Float>? = null
         var detectedFrames = 0
+        var bgDiffHits = 0
+        var yoloHits = 0
+        // 背景差分检测器（用户要求："固定背景，识别移动的白色点，多帧差分确保羽毛球"）：
+        // 远景斜拍时球很小很糊，YOLO 经常漏检，用背景差分做第二通道补充
+        val bgDetector = BackgroundShuttleDetector()
+        // 前 bgFrames 帧学背景（视频开头通常为空场地/球还没动）
+        for ((i, frame) in framesAll.withIndex()) {
+            if (i < 8) bgDetector.learn(frame.bitmap)
+        }
 
         for ((i, frame) in framesAll.withIndex()) {
             yield()
-            val boxes = try {
+            var boxes = try {
                 detector.detect(frame.bitmap, lastBall)
             } catch (e: Exception) {
                 emptyList() // 防闪退：单帧推理异常不中断
+            }
+            var useBgDiff = false
+            if (boxes.isEmpty()) {
+                // YOLO 没检出 → 背景差分补充（白色运动点，多帧确认）
+                val bgCands = bgDetector.detectMovingWhite(frame.bitmap)
+                if (bgCands.isNotEmpty()) {
+                    boxes = boxes + bgCands
+                    useBgDiff = true
+                }
+            } else {
+                bgDetector.updateBackground(frame.bitmap) // 球出现后背景滚动自适应
             }
             val timeSec = frame.timeMs / 1000.0
             // ShuttleTracker 做帧间跟踪过滤（面积/宽高比/跳跃/预测/丢帧/ROI），输出稳定球心
@@ -244,6 +284,7 @@ class VideoAnalyzer {
             if (pos != null) {
                 detectedFrames++
                 lastBall = pos.x to pos.y
+                if (useBgDiff) bgDiffHits++ else yoloHits++
                 val courtPos = Homography.pixelToCourt(homography, pos.x, pos.y)
                 rawPoints.add(
                     BallPoint(
@@ -282,8 +323,8 @@ class VideoAnalyzer {
                 AnalysisError(
                     code = "E201",
                     title = "羽毛球检测失败",
-                    detail = "AI 未能稳定识别出羽毛球：请确保羽毛球在画面中清晰可见（不要太小、不要和白色背景融合），且击球过程完整出现在画面内。",
-                    threshold = "检出帧 $detectedFrames / 总帧 ${framesAll.size}，需要检出 ≥ 6 帧"
+                    detail = "YOLO 与背景差分双通道均未能稳定识别出羽毛球：请确保羽毛球在画面中清晰可见（不要太小、不要和白色背景融合），且击球过程完整出现在画面内。建议：①离场地近一点拍；②拉近镜头让球更大；③保证球和背景颜色差异明显。",
+                    threshold = "检出帧 $detectedFrames / 总帧 ${framesAll.size}（YOLO $yoloHits + 背景差分 $bgDiffHits），需要 ≥ 6 帧"
                 )
             )
         }
@@ -354,7 +395,7 @@ class VideoAnalyzer {
             hits = hits,
             summary = summary,
             analysisDurationMs = System.currentTimeMillis() - startTime,
-            appVersion = "2.8.0",
+            appVersion = "2.9.0",
             frameWidth = w,
             frameHeight = h,
             frameAtMaxSpeed = frameAtMax
@@ -506,5 +547,19 @@ class VideoAnalyzer {
             g[i] = (r * 0.299 + gg * 0.587 + b * 0.114).toInt()
         }
         return g
+    }
+
+    /** 校验学习器预测的角点是否合理（在画面内、面积占比合理、是凸四边形） */
+    private fun isValidPrediction(corners: List<PointF>, w: Int, h: Int): Boolean {
+        if (corners.size != 4) return false
+        for (p in corners) {
+            if (p.x < -0.05f * w || p.x > 1.05f * w || p.y < -0.05f * h || p.y > 1.05f * h) return false
+        }
+        val minX = corners.minOf { it.x }; val maxX = corners.maxOf { it.x }
+        val minY = corners.minOf { it.y }; val maxY = corners.maxOf { it.y }
+        val area = (maxX - minX) * (maxY - minY)
+        if (area < 0.03f * w * h) return false
+        if (area > 0.95f * w * h) return false
+        return true
     }
 }
