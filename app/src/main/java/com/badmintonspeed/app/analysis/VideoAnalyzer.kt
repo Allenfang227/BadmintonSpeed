@@ -1,5 +1,6 @@
 package com.badmintonspeed.app.analysis
 
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.PointF
 import com.badmintonspeed.app.domain.AnalysisResult
@@ -35,17 +36,17 @@ class VideoAnalyzer {
     data class AnalysisException(override val message: String) : Exception(message)
 
     /**
+     * @param context 用于加载 assets 中的 ONNX 模型
      * @param videoFile 视频文件
      * @param courtCornersPx 用户标定的场地四角（像素，顺序：左上->右上->右下->左下）
      * @param analysisFps 目标分析帧率
-     * @param brightThreshold 球检测亮度阈值
      * @param onProgress (percent 0-100, stageName)
      */
     suspend fun analyze(
+        context: Context,
         videoFile: File,
         courtCornersPx: List<PointF>,
         analysisFps: Int,
-        brightThreshold: Int,
         onProgress: (Float, String) -> Unit
     ): AnalysisResult = withContext(Dispatchers.Default) {
         val startTime = System.currentTimeMillis()
@@ -71,21 +72,20 @@ class VideoAnalyzer {
         val homography = Homography.compute(courtCornersPx, StandardCourt.corners)
         val court = CourtResult(courtCornersPx, homography)
 
-        // ---- 阶段 3：球检测 + 跟踪 ----
+        // ---- 阶段 3：球检测（真实 AI：YOLO11 ONNX）+ 跟踪 ----
         onProgress(26f, "检测羽毛球轨迹")
-        val detector = BallDetector(brightThreshold)
+        val detector = ShuttleOnnxDetector(context)
         val tracker = BallTracker()
-        var prevGray: IntArray? = null
         val rawPoints = ArrayList<BallPoint>()
         val w = frames.first().bitmap.width
         val h = frames.first().bitmap.height
 
         for ((i, frame) in frames.withIndex()) {
             yield()
-            val result = detector.detect(frame.bitmap, prevGray)
-            prevGray = result.gray
+            val boxes = detector.detect(frame.bitmap)
+            val blobs = detector.toBlobs(boxes)
             val timeSec = frame.timeMs / 1000.0
-            val pos = tracker.update(result.blobs, frame.index, timeSec, w, h)
+            val pos = tracker.update(blobs, frame.index, timeSec, w, h)
             if (pos != null) {
                 val courtPos = Homography.pixelToCourt(homography, pos.first, pos.second)
                 rawPoints.add(
@@ -94,7 +94,7 @@ class VideoAnalyzer {
                         timeSec = timeSec,
                         x = pos.first,
                         y = pos.second,
-                        confidence = 1f,
+                        confidence = boxes.firstOrNull()?.conf ?: 0.5f,
                         courtX = courtPos.x,
                         courtY = courtPos.y
                     )
@@ -104,10 +104,11 @@ class VideoAnalyzer {
                 onProgress(26f + 56f * (i.toFloat() / frames.size), "检测羽毛球轨迹")
             }
         }
+        detector.close()
         onProgress(82f, "检测羽毛球轨迹")
 
         if (rawPoints.size < 12) {
-            throw AnalysisException("未能稳定检测到羽毛球轨迹：请调整检测灵敏度（设置->检测亮度阈值），或确保羽毛球为白色且在画面中清晰可见")
+            throw AnalysisException("未能稳定检测到羽毛球轨迹：请确保羽毛球在画面中清晰可见、场地标定准确，或换一段光线更好的视频")
         }
 
         // ---- 阶段 4：速度 + 击球 ----
@@ -150,7 +151,7 @@ class VideoAnalyzer {
             hits = hits,
             summary = summary,
             analysisDurationMs = System.currentTimeMillis() - startTime,
-            appVersion = "1.0.0",
+            appVersion = "2.0.0",
             frameWidth = w,
             frameHeight = h,
             frameAtMaxSpeed = frameAtMax

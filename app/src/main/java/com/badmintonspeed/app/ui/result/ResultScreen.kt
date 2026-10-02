@@ -1,338 +1,448 @@
 package com.badmintonspeed.app.ui.result
 
+import android.content.ContentValues
 import android.graphics.Bitmap
 import android.graphics.Paint
+import android.media.MediaPlayer
+import android.os.Build
+import android.os.Environment
+import android.provider.MediaStore
+import android.view.TextureView
+import android.widget.Toast
 import androidx.compose.foundation.Canvas
-import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.produceState
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.badmintonspeed.app.analysis.VideoFrameExtractor
+import androidx.compose.ui.viewinterop.AndroidView
 import com.badmintonspeed.app.domain.AnalysisResult
-import com.badmintonspeed.app.domain.BallPoint
-import com.badmintonspeed.app.domain.HitType
 import com.badmintonspeed.app.ui.MainViewModel
-import com.badmintonspeed.app.ui.Screen
-import com.badmintonspeed.app.ui.computeScale
-import com.badmintonspeed.app.ui.formatSpeed
-import com.badmintonspeed.app.ui.theme.Background
-import com.badmintonspeed.app.ui.theme.Error
-import com.badmintonspeed.app.ui.theme.OnBackground
-import com.badmintonspeed.app.ui.theme.OnSurface
 import com.badmintonspeed.app.ui.theme.OnSurfaceVariant
 import com.badmintonspeed.app.ui.theme.Primary
-import com.badmintonspeed.app.ui.theme.SpeedColors
 import com.badmintonspeed.app.ui.theme.Surface
-import com.badmintonspeed.app.ui.theme.SurfaceVariant
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import com.badmintonspeed.app.ui.theme.TrailYellow
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import kotlin.math.PI
+import kotlin.math.cos
+import kotlin.math.min
+import kotlin.math.sin
 
+/**
+ * 结果页（图6-9）：
+ * 视频区 + 黄色流光球路轨迹 + 右上角 3D 可拖拽实时模拟回放
+ * + SHOT SPEED / LIVE SPEED / IN-OUT 判定 + 底部控制栏（TRAJ FX / PREV / NEXT / DOWNLOAD）。
+ */
 @Composable
 fun ResultScreen(vm: MainViewModel) {
     val result = vm.result.collectAsState().value ?: return
-    val unit = vm.settings.speedUnit
-    val maxSpeed = result.summary.maxSpeedKmh
+    val context = LocalContext.current
 
-    val frameBmp by produceState<Bitmap?>(null, result) {
-        value = withContext(Dispatchers.IO) {
-            runCatching {
-                val timeMs = (result.frameAtMaxSpeed / result.videoInfo.fps.coerceAtLeast(1f) * 1000).toLong()
-                VideoFrameExtractor().getFrame(File(result.videoInfo.path), timeMs, 720)
-            }.getOrNull()
+    var progressMs by remember { mutableLongStateOf(0L) }
+    var playing by remember { mutableStateOf(true) }
+    var showTrail by remember { mutableStateOf(true) }
+    val mediaPlayer = remember { MediaPlayer() }
+
+    val frameTimeMs = (1000f / result.videoInfo.fps.coerceAtLeast(1f)).toLong()
+
+    // 绑定视频源
+    DisposableEffect(Unit) {
+        runCatching {
+            mediaPlayer.setDataSource(result.videoInfo.path)
+            mediaPlayer.isLooping = true
+            mediaPlayer.prepare()
+            mediaPlayer.start()
+        }
+        onDispose {
+            runCatching { mediaPlayer.stop() }
+            mediaPlayer.release()
         }
     }
 
-    Column(
-        Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(16.dp)
-    ) {
-        // 最高球速
-        Card(
-            shape = RoundedCornerShape(20.dp),
-            colors = CardDefaults.cardColors(containerColor = Surface)
-        ) {
-            Column(Modifier.fillMaxWidth().padding(vertical = 20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("本次最高球速", color = OnSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
-                Spacer(Modifier.height(6.dp))
-                Row(verticalAlignment = Alignment.Bottom) {
-                    Text(
-                        formatSpeed(maxSpeed, unit),
-                        color = SpeedColors.forSpeed(maxSpeed),
-                        fontSize = 64.sp,
-                        fontWeight = FontWeight.Black
-                    )
-                    Spacer(Modifier.width(6.dp))
-                    Text(unit.displayName, color = OnSurfaceVariant, style = MaterialTheme.typography.titleMedium, modifier = Modifier.padding(bottom = 10.dp))
-                }
-                if (result.summary.smashCount > 0) {
-                    Spacer(Modifier.height(4.dp))
-                    Text("包含 ${result.summary.smashCount} 次杀球（≥140 km/h）", color = OnSurfaceVariant, style = MaterialTheme.typography.bodySmall)
+    // 播放轮询（更新进度）
+    LaunchedEffect(playing) {
+        while (isActive) {
+            if (playing) {
+                runCatching {
+                    val p = mediaPlayer.currentPosition.toLong()
+                    progressMs = p
                 }
             }
+            delay(60)
         }
-        Spacer(Modifier.height(12.dp))
+    }
 
-        // 统计行
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            Stat("平均", formatSpeed(result.summary.avgSpeedKmh, unit), Modifier.weight(1f))
-            Stat("击球", result.summary.totalHits.toString(), Modifier.weight(1f))
-            Stat("杀球", result.summary.smashCount.toString(), Modifier.weight(1f))
+    fun seekTo(posMs: Long) {
+        val target = posMs.coerceIn(0L, result.videoInfo.durationMs)
+        runCatching {
+            mediaPlayer.seekTo(target.toInt())
+            progressMs = target
         }
-        Spacer(Modifier.height(16.dp))
+    }
 
-        // 球路回放
-        SectionTitle("球路回放")
-        Card(shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = Surface)) {
-            TrajectoryOverlay(frameBmp, result, Modifier.fillMaxWidth().height(300.dp))
-        }
-        Spacer(Modifier.height(16.dp))
+    fun stepFrame(delta: Long) {
+        val p = progressMs + delta
+        seekTo(p)
+    }
 
-        // 速度曲线
-        SectionTitle("速度曲线")
-        Card(shape = RoundedCornerShape(16.dp), colors = CardDefaults.cardColors(containerColor = Surface)) {
-            SpeedChart(result.trajectory, result.summary.maxSpeedKmh, Modifier.fillMaxWidth().height(220.dp))
-        }
-        Spacer(Modifier.height(16.dp))
-
-        // 击球列表
-        SectionTitle("击球明细")
-        if (result.hits.isEmpty()) {
-            Text("未检测到明显击球（速度峰值低于 80 km/h），可尝试在设置中调低检测亮度阈值", color = OnSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
+    fun togglePlay() {
+        if (playing) {
+            runCatching { mediaPlayer.pause() }
         } else {
-            result.hits.forEach { h ->
-                HitRow(h, unit)
+            runCatching { mediaPlayer.start() }
+        }
+        playing = !playing
+    }
+
+    // ---- 实时数据（图6-9：SHOT SPEED / LIVE SPEED / IN-OUT） ----
+    val (shotSpeed, liveSpeed, isIn) = remember(result) {
+        data class Live(
+            val shot: Float,
+            val live: Float,
+            val inCourt: Boolean
+        )
+        val p = result.trajectory
+        val maxP = p.maxByOrNull { it.speedKmh ?: 0f }
+        Live(
+            shot = maxP?.speedKmh ?: 0f,
+            live = p.lastOrNull()?.speedKmh ?: 0f,
+            inCourt = p.lastOrNull()?.let { pt ->
+                pt.courtX in 0f..6.10f && pt.courtY in 0f..13.40f
+            } ?: true
+        )
+    }
+
+    Box(Modifier.fillMaxSize().background(Color(0xFF08100C))) {
+        // ---- 中央视频区（带流光轨迹） ----
+        Box(Modifier.fillMaxSize().padding(bottom = 96.dp)) {
+            // 视频画面
+            AndroidView(
+                factory = { ctx ->
+                    TextureView(ctx).apply {
+                        surfaceTextureListener = object : android.view.TextureView.SurfaceTextureListener {
+                            override fun onSurfaceTextureAvailable(surface: android.graphics.SurfaceTexture, width: Int, height: Int) {
+                                runCatching {
+                                    mediaPlayer.setSurface(android.view.Surface(surface))
+                                }
+                            }
+                            override fun onSurfaceTextureSizeChanged(s: android.graphics.SurfaceTexture, w: Int, h: Int) {}
+                            override fun onSurfaceTextureDestroyed(s: android.graphics.SurfaceTexture) = true
+                            override fun onSurfaceTextureUpdated(s: android.graphics.SurfaceTexture) {}
+                        }
+                    }
+                },
+                modifier = Modifier.fillMaxSize()
+            )
+
+            // 黄色流光轨迹叠加
+            if (showTrail) {
+                TrajectoryOverlay(result, progressMs, Modifier.fillMaxSize())
+            }
+
+            // 左上返回箭头（图6-9）
+            Surface(
+                shape = CircleShape,
+                color = Color(0xAA0A1410),
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(16.dp)
+                    .size(44.dp)
+                    .clickable { vm.goTo(com.badmintonspeed.app.ui.Screen.Home) }
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text("←", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
+                }
+            }
+
+            // 右上角：3D 标签 + SHOT SPEED / LIVE SPEED（图6-9）
+            Column(
+                Modifier.align(Alignment.TopEnd).padding(16.dp),
+                horizontalAlignment = Alignment.End
+            ) {
+                Surface(shape = RoundedCornerShape(8.dp), color = Color(0xAA0A1410)) {
+                    Text("3D", color = Primary, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp))
+                }
                 Spacer(Modifier.height(8.dp))
+                Surface(shape = RoundedCornerShape(10.dp), color = Color(0xAA0A1410)) {
+                    Row(
+                        Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        SpeedTag("SHOT SPEED", shotSpeed)
+                        Spacer(Modifier.width(14.dp))
+                        SpeedTag("LIVE SPEED", liveSpeed)
+                    }
+                }
+            }
+
+            // 右上角 3D 可拖拽实时模拟回放（图6-9 右上角）
+            Surface(
+                shape = RoundedCornerShape(14.dp),
+                color = Color(0xCC0A1410),
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .padding(top = 78.dp, end = 16.dp)
+                    .size(200.dp)
+            ) {
+                Court3DView(
+                    result = result,
+                    progressMs = progressMs,
+                    modifier = Modifier.fillMaxSize().padding(8.dp)
+                )
             }
         }
-        Spacer(Modifier.height(12.dp))
 
-        Text("已自动保存到历史记录", color = OnSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-        Spacer(Modifier.height(12.dp))
-        Button(
-            onClick = { vm.goTo(Screen.Home) },
-            modifier = Modifier.fillMaxWidth().height(52.dp),
-            colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = Primary)
+        // ---- 底部控制栏（图6-9） ----
+        Column(
+            Modifier
+                .align(Alignment.BottomCenter)
+                .fillMaxWidth()
+                .background(Color(0xEE08100C))
+                .padding(horizontal = 24.dp, vertical = 10.dp)
         ) {
-            Text("返回首页", fontWeight = FontWeight.Bold)
-        }
-        Spacer(Modifier.height(16.dp))
-    }
-}
-
-@Composable
-private fun Stat(title: String, value: String, modifier: Modifier = Modifier) {
-    Card(modifier = modifier, shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = SurfaceVariant)) {
-        Column(Modifier.padding(vertical = 14.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-            Text(value, color = OnBackground, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-            Text(title, color = OnSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-        }
-    }
-}
-
-@Composable
-private fun SectionTitle(title: String) {
-    Text(title, style = MaterialTheme.typography.titleMedium, color = OnSurface, fontWeight = FontWeight.SemiBold)
-    Spacer(Modifier.height(8.dp))
-}
-
-@Composable
-private fun HitRow(hit: com.badmintonspeed.app.domain.HitAnalysis, unit: com.badmintonspeed.app.domain.SpeedUnit) {
-    val typeColor = when (hit.hitType) {
-        HitType.SMASH -> Error
-        HitType.CLEAR -> SpeedColors.Fast
-        HitType.DRIVE -> SpeedColors.Medium
-        HitType.DROP -> SpeedColors.Slow
-        else -> OnSurfaceVariant
-    }
-    Card(shape = RoundedCornerShape(14.dp), colors = CardDefaults.cardColors(containerColor = Surface)) {
-        Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                hit.hitType.displayName,
-                color = typeColor,
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.width(64.dp)
+            // 进度条
+            Slider(
+                value = progressMs.toFloat(),
+                onValueChange = { v -> seekTo(v.toLong()) },
+                valueRange = 0f..result.videoInfo.durationMs.coerceAtLeast(1L).toFloat(),
+                colors = SliderDefaults.colors(
+                    thumbColor = TrailYellow,
+                    activeTrackColor = TrailYellow,
+                    inactiveTrackColor = Color(0xFF2A3B31)
+                ),
+                modifier = Modifier.fillMaxWidth()
             )
-            Column(Modifier.weight(1f)) {
-                Text("${formatSpeed(hit.maxSpeedKmh, unit)} ${unit.displayName}", color = OnBackground, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                Text("平均 ${formatSpeed(hit.avgSpeedKmh, unit)} ${unit.displayName}", color = OnSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-            }
-            Text("t=${"%.1f".format(hit.timeSeconds)}s", color = OnSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-        }
-    }
-}
 
-/** 轨迹叠加层：帧图 + 按速度着色的球路 + 击球标记 */
-@Composable
-private fun TrajectoryOverlay(bmp: Bitmap?, result: AnalysisResult, modifier: Modifier) {
-    var size by remember { mutableStateOf(IntSize.Zero) }
-    val maxSpeed = result.summary.maxSpeedKmh.coerceAtLeast(1f)
-
-    Box(modifier.onSizeChanged { size = it }) {
-        Canvas(Modifier.fillMaxSize()) {
-            if (size.width <= 0 || size.height <= 0) return@Canvas
-            val dstInfo = computeScale(bmp?.width ?: result.frameWidth, bmp?.height ?: result.frameHeight, size.width, size.height)
-
-            // 背景帧
-            if (bmp != null) {
-                drawImage(
-                    image = bmp.asImageBitmap(),
-                    dstOffset = IntOffset(dstInfo.offsetX.toInt(), dstInfo.offsetY.toInt()),
-                    dstSize = IntSize(dstInfo.width, dstInfo.height)
-                )
-            }
-
-            // 轨迹坐标 -> 显示坐标（分析帧分辨率 -> 帧图分辨率 -> 显示）
-            fun mapPoint(p: BallPoint): Offset {
-                val fx = p.x / result.frameWidth
-                val fy = p.y / result.frameHeight
-                val bmpX = fx * (bmp?.width ?: result.frameWidth)
-                val bmpY = fy * (bmp?.height ?: result.frameHeight)
-                return Offset(
-                    dstInfo.offsetX + bmpX * dstInfo.scale,
-                    dstInfo.offsetY + bmpY * dstInfo.scale
-                )
-            }
-
-            val pts = result.trajectory.filter { (it.speedKmh ?: 0f) > 5f }
-            for (i in 1 until pts.size) {
-                val a = mapPoint(pts[i - 1])
-                val b = mapPoint(pts[i])
-                drawLine(
-                    color = SpeedColors.forSpeed(pts[i].speedKmh ?: 0f, maxSpeed),
-                    start = a,
-                    end = b,
-                    strokeWidth = 5f
-                )
-            }
-
-            // 击球标记
-            for (h in result.hits) {
-                val start = h.trajectory.firstOrNull() ?: continue
-                val c = mapPoint(start)
-                drawCircle(Color.Black, radius = 16f, center = c)
-                drawCircle(Error, radius = 13f, center = c)
-            }
-
-            // 最高速点
-            result.trajectory.maxByOrNull { it.speedKmh ?: 0f }?.let { top ->
-                val c = mapPoint(top)
-                drawCircle(SpeedColors.Fastest, radius = 18f, center = c, style = Stroke(width = 5f))
+            // 控制按钮：TRAJ FX / PREV FRAME / 播放暂停 / NEXT FRAME / DOWNLOAD
+            Row(
+                Modifier.fillMaxWidth(),
+                horizontalArrangement = androidx.compose.foundation.layout.Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                ControlButton("TRAJ FX", highlight = showTrail) { showTrail = !showTrail }
+                ControlButton("PREV FRAME") { stepFrame(-frameTimeMs) }
+                // 播放/暂停（图7 中央）
+                Surface(
+                    shape = CircleShape,
+                    color = Primary,
+                    modifier = Modifier.size(46.dp).clickable { togglePlay() }
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text(if (playing) "❚❚" else "▶", color = Color(0xFF06120A), fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+                ControlButton("NEXT FRAME") { stepFrame(frameTimeMs) }
+                ControlButton("DOWNLOAD") { downloadResult(context, result) }
             }
         }
     }
 }
 
-/** 速度-时间曲线 */
+/** 速度标签 */
 @Composable
-private fun SpeedChart(points: List<BallPoint>, maxSpeed: Float, modifier: Modifier) {
-    var size by remember { mutableStateOf(IntSize.Zero) }
-    Box(modifier.onSizeChanged { size = it }) {
-        Canvas(Modifier.fillMaxSize()) {
-            if (size.width <= 0 || size.height <= 0 || points.size < 2) return@Canvas
-            val w = size.width.toFloat()
-            val h = size.height.toFloat()
-            val padL = 46f; val padR = 10f; val padT = 14f; val padB = 28f
-            val cw = w - padL - padR
-            val ch = h - padT - padB
-            val tMax = points.last().timeSec.coerceAtLeast(0.1)
-            val sMax = (maxSpeed * 1.15f).coerceAtLeast(10f)
+private fun SpeedTag(label: String, speed: Float) {
+    Column(horizontalAlignment = Alignment.End) {
+        Text(
+            label,
+            color = OnSurfaceVariant,
+            fontSize = 10.sp,
+            fontWeight = FontWeight.Medium
+        )
+        Text(
+            "${"%.0f".format(speed)} KM/H",
+            color = TrailYellow,
+            fontSize = 20.sp,
+            fontWeight = FontWeight.Black
+        )
+    }
+}
 
-            fun xOf(t: Double) = padL + (t / tMax * cw).toFloat()
-            fun yOf(s: Float) = padT + ch - (s / sMax * ch)
+/** 底部控制按钮 */
+@Composable
+private fun ControlButton(label: String, highlight: Boolean = false, onClick: () -> Unit) {
+    Surface(
+        shape = RoundedCornerShape(10.dp),
+        color = if (highlight) Color(0x334ADE80) else Color(0xFF15241D),
+        modifier = Modifier.clickable(onClick = onClick)
+    ) {
+        Text(
+            label,
+            color = if (highlight) Primary else Color.White,
+            fontSize = 13.sp,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
+        )
+    }
+}
 
-            // 网格与刻度
-            val textPaint = Paint().apply {
-                color = 0xFFCBD5E1.toInt()
-                textSize = 22f
-                textAlign = Paint.Align.RIGHT
-            }
-            val gridColor = Color(0xFF334155)
-            for (tick in 0..4) {
-                val v = sMax * tick / 4f
-                val y = yOf(v)
-                drawLine(gridColor, Offset(padL, y), Offset(w - padR, y), strokeWidth = 1f)
-                drawContext.canvas.nativeCanvas.drawText("${v.toInt()}", padL - 6f, y + 8f, textPaint)
-            }
-            // 时间刻度
-            textPaint.textAlign = Paint.Align.LEFT
-            for (tick in 0..4) {
-                val t = tMax * tick / 4f
-                val x = xOf(t)
-                drawLine(gridColor, Offset(x, padT), Offset(x, padT + ch), strokeWidth = 1f)
-                drawContext.canvas.nativeCanvas.drawText(
-                    "${"%.1f".format(t)}s", x - 14f, padT + ch + 20f, textPaint
-                )
-            }
+/** 黄色流光轨迹叠加：当前播放时刻附近的球路光迹（图6-9） */
+@Composable
+private fun TrajectoryOverlay(result: AnalysisResult, progressMs: Long, modifier: Modifier) {
+    var size by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
+    Canvas(modifier.onSizeChanged { size = it }) {
+        if (size.width <= 0 || size.height <= 0) return@Canvas
+        val pts = result.trajectory
+        if (pts.size < 2) return@Canvas
 
-            // 曲线
-            val line = Path()
-            val fill = Path()
-            points.forEachIndexed { i, p ->
-                val x = xOf(p.timeSec)
-                val y = yOf(p.speedKmh ?: 0f)
-                if (i == 0) { line.moveTo(x, y); fill.moveTo(x, y) }
-                else { line.lineTo(x, y); fill.lineTo(x, y) }
+        // 显示区域（保持原视频宽高比，居中）
+        val vw = result.frameWidth.coerceAtLeast(1)
+        val vh = result.frameHeight.coerceAtLeast(1)
+        val scale = min(size.width.toFloat() / vw, size.height.toFloat() / vh)
+        val dw = vw * scale
+        val dh = vh * scale
+        val ox = (size.width - dw) / 2f
+        val oy = (size.height - dh) / 2f
+
+        fun map(p: com.badmintonspeed.app.domain.BallPoint): Offset =
+            Offset(ox + p.x * scale, oy + p.y * scale)
+
+        // 当前播放时刻
+        val tNow = progressMs / 1000.0
+        val visible = pts.filter { it.timeSec <= tNow + 0.03 }
+
+        if (visible.size < 2) {
+            // 播放初始：画一小段起始光点
+            visible.lastOrNull()?.let { p ->
+                val c = map(p)
+                drawCircle(TrailYellow, radius = 7f, center = c)
+                drawCircle(Color(0x66FFD60A), radius = 14f, center = c)
             }
-            val lastX = xOf(points.last().timeSec)
-            val lastY = yOf(points.last().speedKmh ?: 0f)
-            fill.lineTo(lastX, padT + ch)
-            fill.lineTo(xOf(points.first().timeSec), padT + ch)
-            fill.close()
-            drawPath(
-                fill,
-                brush = Brush.verticalGradient(
-                    listOf(Color(0x553B82F6), Color(0x003B82F6))
-                )
+            return@Canvas
+        }
+
+        // 光带（黄色流光）：从起点到当前点连成渐变光迹
+        val last = visible.last()
+        val segCount = 24
+        val n = min(segCount, visible.size - 1)
+        val tail = visible.takeLast(n)
+        for (i in 1 until tail.size) {
+            val a = map(tail[i - 1])
+            val b = map(tail[i])
+            val frac = i.toFloat() / tail.size
+            val width = 2f + 7f * frac
+            val alpha = 0.25f + 0.75f * frac
+            drawLine(
+                color = Color(0xFFFFD60A).copy(alpha = alpha),
+                start = a,
+                end = b,
+                strokeWidth = width,
+                cap = StrokeCap.Round
             )
-            drawPath(line, color = Primary, style = Stroke(width = 4f))
+        }
 
-            // 击球点
-            val hitTimes = points.filter { it.isSmash }.map { it.timeSec }.toSet()
-            hitTimes.forEach { t ->
-                val x = xOf(t)
-                drawCircle(Color.Black, radius = 9f, center = Offset(x, yOf(points.first { it.timeSec == t }.speedKmh ?: 0f)))
-                drawCircle(Error, radius = 6f, center = Offset(x, yOf(points.first { it.timeSec == t }.speedKmh ?: 0f)))
+        // 亮点（当前球位）：三层光晕（图6-9 黄色流光亮点）
+        val c = map(last)
+        drawCircle(Color(0x33FFD60A), radius = 26f, center = c)
+        drawCircle(Color(0x66FFD60A), radius = 16f, center = c)
+        drawCircle(TrailYellow, radius = 8f, center = c)
+        drawCircle(Color.White, radius = 3.5f, center = Offset(c.x - 2f, c.y - 2f))
+    }
+}
+
+/** 导出视频 + 分析数据到公共 Downloads（图6-9 DOWNLOAD） */
+private fun downloadResult(context: android.content.Context, result: AnalysisResult) {
+    try {
+        val videoFile = File(result.videoInfo.path)
+        if (!videoFile.exists()) {
+            Toast.makeText(context, "视频文件不存在", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+        val resolver = context.contentResolver
+
+        // 视频
+        val videoValues = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, "BadmintonSpeed_${stamp}.mp4")
+            put(MediaStore.MediaColumns.MIME_TYPE, "video/mp4")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/BadmintonSpeed")
             }
         }
+        val videoUri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, videoValues)
+        if (videoUri != null) {
+            resolver.openOutputStream(videoUri)?.use { out ->
+                videoFile.inputStream().use { it.copyTo(out) }
+            }
+        }
+
+        // 分析数据
+        val dataValues = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, "BadmintonSpeed_${stamp}.txt")
+            put(MediaStore.MediaColumns.MIME_TYPE, "text/plain")
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/BadmintonSpeed")
+            }
+        }
+        val dataUri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, dataValues)
+        if (dataUri != null) {
+            resolver.openOutputStream(dataUri)?.use { out ->
+                out.write(buildReport(result).toByteArray())
+            }
+        }
+
+        Toast.makeText(context, "已保存到 下载/BadmintonSpeed/", Toast.LENGTH_LONG).show()
+    } catch (e: Exception) {
+        Toast.makeText(context, "导出失败：${e.message}", Toast.LENGTH_SHORT).show()
     }
+}
+
+private fun buildReport(result: AnalysisResult): String {
+    val sb = StringBuilder()
+    sb.appendLine("杀球测速 BadmintonSpeed 分析报告")
+    sb.appendLine("版本：2.0")
+    sb.appendLine("最高球速：${"%.1f".format(result.summary.maxSpeedKmh)} km/h")
+    sb.appendLine("平均球速：${"%.1f".format(result.summary.avgSpeedKmh)} km/h")
+    sb.appendLine("击球次数：${result.summary.totalHits}（其中杀球 ${result.summary.smashCount} 次）")
+    sb.appendLine("轨迹点数：${result.trajectory.size}")
+    sb.appendLine()
+    sb.appendLine("--- 轨迹点（帧, 时间s, 像素x, 像素y, 球速km/h, 场地x, 场地y） ---")
+    result.trajectory.forEach { p ->
+        sb.appendLine("${p.frame}, ${"%.2f".format(p.timeSec)}, ${"%.0f".format(p.x)}, ${"%.0f".format(p.y)}, ${"%.1f".format(p.speedKmh ?: 0f)}, ${"%.2f".format(p.courtX)}, ${"%.2f".format(p.courtY)}")
+    }
+    return sb.toString()
 }

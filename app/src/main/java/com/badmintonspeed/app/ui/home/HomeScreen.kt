@@ -1,6 +1,9 @@
 package com.badmintonspeed.app.ui.home
 
-import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -9,126 +12,218 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.badmintonspeed.app.domain.AnalysisRecord
-import com.badmintonspeed.app.ui.Screen
-import com.badmintonspeed.app.ui.components.RecordRow
-import com.badmintonspeed.app.ui.formatSpeed
+import com.badmintonspeed.app.ui.MainViewModel
+import com.badmintonspeed.app.ui.theme.Background
+import com.badmintonspeed.app.ui.theme.DividerColor
 import com.badmintonspeed.app.ui.theme.OnBackground
-import com.badmintonspeed.app.ui.theme.OnSurface
 import com.badmintonspeed.app.ui.theme.OnSurfaceVariant
 import com.badmintonspeed.app.ui.theme.Primary
-import com.badmintonspeed.app.ui.theme.SpeedColors
+import com.badmintonspeed.app.ui.theme.Surface
+import com.badmintonspeed.app.ui.theme.SurfaceBright
 import com.badmintonspeed.app.ui.theme.SurfaceVariant
 
+/**
+ * 主页（图2）：选择测速模式。
+ * 左侧导航栏由 AppRoot 承载；本页为内容区。
+ */
 @Composable
 fun HomeScreen(
-    vm: com.badmintonspeed.app.ui.MainViewModel,
+    vm: MainViewModel,
     onStart: () -> Unit,
     records: List<AnalysisRecord>
 ) {
-    val unit = vm.settings.speedUnit
-    val best = records.maxOfOrNull { it.maxSpeedKmh } ?: 0f
-
     Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(20.dp)
+        Modifier.fillMaxSize().padding(horizontal = 48.dp, vertical = 36.dp)
     ) {
-        Text("杀球测速", style = MaterialTheme.typography.headlineLarge, color = OnBackground, fontWeight = FontWeight.Bold)
-        Text("羽毛球杀球速度 AI 分析 · 全本地计算 · 隐私安全", color = OnSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
-        Spacer(Modifier.height(24.dp))
+        // 标题
+        Text(
+            "选择测速模式",
+            color = Color.White,
+            fontSize = 34.sp,
+            fontWeight = FontWeight.Bold
+        )
+        Text(
+            "Select Speed Test Mode",
+            color = OnSurfaceVariant,
+            fontSize = 16.sp
+        )
+        Spacer(Modifier.height(40.dp))
 
-        Button(
-            onClick = onStart,
-            modifier = Modifier.fillMaxWidth().height(58.dp),
-            shape = RoundedCornerShape(16.dp),
-            colors = androidx.compose.material3.ButtonDefaults.buttonColors(containerColor = Primary)
-        ) {
-            Text("开始测速", fontSize = 18.sp, fontWeight = FontWeight.Bold)
+        Row(Modifier.fillMaxWidth()) {
+            // ---- 实时测速（开发中） ----
+            ModeCard(
+                modifier = Modifier.weight(1f).padding(end = 28.dp),
+                icon = { RadarIcon() },
+                title = "实时测速",
+                desc = "把手机对准正在打球的场地，本APP会实时计算并显示每帧球的球速并还原出3D羽球轨迹。",
+                buttonText = "开发中",
+                enabled = false
+            )
+            // ---- 上传视频测速（进入） ----
+            ModeCard(
+                modifier = Modifier.weight(1f).padding(start = 28.dp),
+                icon = { UploadIcon() },
+                title = "上传视频测速",
+                desc = "上传录制好的打球视频，本APP会计算整个视频后，再显示每帧球速并还原出3D羽球轨迹。",
+                buttonText = "进入",
+                enabled = true,
+                onClick = onStart
+            )
         }
-        Spacer(Modifier.height(16.dp))
 
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            StatCard("累计测速", records.size.toString(), Modifier.weight(1f))
-            StatCard("最高球速", if (best > 0) formatSpeed(best, unit) else "--", Modifier.weight(1f), highlight = best > 0)
-        }
-        Spacer(Modifier.height(24.dp))
+        Spacer(Modifier.weight(1f))
 
-        Text("最近记录", style = MaterialTheme.typography.titleMedium, color = OnSurface, fontWeight = FontWeight.SemiBold)
-        Spacer(Modifier.height(8.dp))
-        if (records.isEmpty()) {
-            Text("暂无记录，完成一次测速后会自动保存", color = OnSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
-        } else {
-            records.take(3).forEach { r ->
-                RecordRow(
-                    record = r,
-                    unit = unit,
-                    onClick = { vm.goTo(Screen.RecordDetail(r)) },
-                    onDelete = { vm.deleteRecord(r.id) }
-                )
-                Spacer(Modifier.height(8.dp))
-            }
-        }
-        Spacer(Modifier.height(24.dp))
-
-        UsageGuide()
-        Spacer(Modifier.height(24.dp))
-    }
-}
-
-@Composable
-private fun StatCard(title: String, value: String, modifier: Modifier = Modifier, highlight: Boolean = false) {
-    Card(
-        modifier = modifier,
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = SurfaceVariant)
-    ) {
-        Column(Modifier.padding(16.dp)) {
-            Text(title, color = OnSurfaceVariant, style = MaterialTheme.typography.bodySmall)
-            Spacer(Modifier.height(6.dp))
+        // 底部统计条
+        val best = records.maxOfOrNull { it.maxSpeedKmh } ?: 0f
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text("累计测速", color = OnSurfaceVariant, fontSize = 14.sp)
+            Text(" ${records.size} 次", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.width(32.dp))
+            Text("最高球速", color = OnSurfaceVariant, fontSize = 14.sp)
             Text(
-                value,
-                color = if (highlight) SpeedColors.forSpeed(value.toFloatOrNull() ?: 0f, 400f) else OnSurface,
-                style = MaterialTheme.typography.headlineMedium,
+                if (best > 0) " ${"%.0f".format(best)} km/h" else " --",
+                color = if (best > 0) Color(0xFFFFD60A) else Color.White,
+                fontSize = 16.sp,
                 fontWeight = FontWeight.Bold
             )
         }
+        Spacer(Modifier.height(8.dp))
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(DividerColor)
+        )
     }
 }
 
 @Composable
-private fun UsageGuide() {
+private fun ModeCard(
+    modifier: Modifier,
+    icon: @Composable () -> Unit,
+    title: String,
+    desc: String,
+    buttonText: String,
+    enabled: Boolean,
+    onClick: () -> Unit = {}
+) {
     Card(
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = androidx.compose.ui.graphics.Color(0xFF16233B))
+        modifier = modifier,
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = Surface)
     ) {
-        Column(Modifier.padding(16.dp)) {
-            Text("如何使用", style = MaterialTheme.typography.titleSmall, color = OnSurface, fontWeight = FontWeight.SemiBold)
-            Spacer(Modifier.height(8.dp))
-            listOf(
-                "① 横屏拍摄一段包含完整杀球过程的视频（球需清晰可见）",
-                "② 点击「开始测速」选择视频",
-                "③ 按顺序点击画面中的场地四角（左上→右上→右下→左下）",
-                "④ 自动分析：检测球路 → 透视换算 → 计算球速"
-            ).forEach { s ->
-                Text(s, color = OnSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
-                Spacer(Modifier.height(4.dp))
+        Column(
+            Modifier.fillMaxWidth().padding(28.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Box(
+                Modifier
+                    .width(64.dp)
+                    .height(64.dp)
+                    .background(SurfaceBright, RoundedCornerShape(18.dp)),
+                contentAlignment = Alignment.Center
+            ) { icon() }
+            Spacer(Modifier.height(20.dp))
+            Text(title, color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(12.dp))
+            Text(
+                desc,
+                color = OnSurfaceVariant,
+                fontSize = 14.sp,
+                lineHeight = 22.sp
+            )
+            Spacer(Modifier.height(28.dp))
+            Button(
+                onClick = onClick,
+                enabled = enabled,
+                shape = RoundedCornerShape(12.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (enabled) Primary else Color(0xFF2A3B31),
+                    contentColor = if (enabled) Color(0xFF06120A) else OnSurfaceVariant,
+                    disabledContainerColor = Color(0xFF2A3B31),
+                    disabledContentColor = OnSurfaceVariant
+                ),
+                modifier = Modifier.width(140.dp).height(46.dp)
+            ) {
+                Text(buttonText, fontSize = 16.sp, fontWeight = FontWeight.Bold)
             }
         }
+    }
+}
+
+@Composable
+private fun RadarIcon() {
+    Canvas(Modifier.width(34.dp).height(34.dp)) {
+        val c = Offset(size.width / 2f, size.height / 2f)
+        val r = size.minDimension / 2f
+        drawArc(
+            color = Primary,
+            startAngle = -90f,
+            sweepAngle = 100f,
+            useCenter = false,
+            topLeft = Offset(c.x - r, c.y - r),
+            size = androidx.compose.ui.geometry.Size(r * 2f, r * 2f),
+            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 3f)
+        )
+        drawLine(
+            color = Primary,
+            start = c,
+            end = Offset(c.x + r, c.y),
+            strokeWidth = 3f,
+            cap = StrokeCap.Round
+        )
+        drawCircle(Primary, radius = 4f, center = c)
+    }
+}
+
+@Composable
+private fun UploadIcon() {
+    Canvas(Modifier.width(34.dp).height(34.dp)) {
+        val w = size.width
+        val h = size.height
+        val y = h * 0.62f
+        drawRoundRect(
+            color = Primary,
+            topLeft = Offset(w * 0.22f, y),
+            size = androidx.compose.ui.geometry.Size(w * 0.56f, h * 0.28f),
+            cornerRadius = androidx.compose.ui.geometry.CornerRadius(6f, 6f)
+        )
+        drawLine(
+            color = Primary,
+            start = Offset(w / 2f, y - h * 0.18f),
+            end = Offset(w / 2f, y - h * 0.02f),
+            strokeWidth = 4f,
+            cap = StrokeCap.Round
+        )
+        drawLine(
+            color = Primary,
+            start = Offset(w * 0.38f, y - h * 0.18f),
+            end = Offset(w / 2f, y - h * 0.34f),
+            strokeWidth = 4f,
+            cap = StrokeCap.Round
+        )
+        drawLine(
+            color = Primary,
+            start = Offset(w / 2f, y - h * 0.34f),
+            end = Offset(w * 0.62f, y - h * 0.18f),
+            strokeWidth = 4f,
+            cap = StrokeCap.Round
+        )
     }
 }

@@ -34,6 +34,9 @@ sealed interface Screen {
     object Result : Screen
     object History : Screen
     object Settings : Screen
+    object Tutorial : Screen
+    object Mine : Screen
+    object About : Screen
     data class RecordDetail(val record: AnalysisRecord) : Screen
 }
 
@@ -139,8 +142,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         analyzeJob = viewModelScope.launch {
             try {
                 val fps = settings.performanceMode.analysisFps
-                val threshold = settings.brightThreshold
-                val result = VideoAnalyzer().analyze(file, cr, fps, threshold) { p, s ->
+                val result = VideoAnalyzer().analyze(context, file, cr, fps) { p, s ->
                     _progress.value = p
                     _stage.value = s
                 }

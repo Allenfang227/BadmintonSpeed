@@ -22,3 +22,6 @@ local.properties
 .cxx/
 *.log
 *.apk
+
+# Local model weights (only assets copy is committed)
+/models/
