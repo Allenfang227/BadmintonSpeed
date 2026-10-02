@@ -144,20 +144,34 @@ class VideoAnalyzer {
             )
         }
         val framesAll = deduped
-        val anchorFrame = framesAll.first().bitmap
 
         // ================= 阶段 3：场地基准检测（8-28%，黄线框贴合场地线） =================
         onStage(StageUpdate(AnalysisPhase.COURT, 0, 10f, 9f))
-        onPreviewFrame(anchorFrame.copy(Bitmap.Config.ARGB_8888, true))
-        delay(150)
-        onStage(StageUpdate(AnalysisPhase.COURT, 0, 35f, 13f))
-        delay(150)
+        // 尝试多帧：首帧可能模糊/被遮挡，用首帧、1/3处、2/3处帧依次检测，任一成功即可
+        val probeIndexes = listOf(
+            0,
+            (framesAll.size / 3).coerceAtLeast(1),
+            (framesAll.size * 2 / 3).coerceAtLeast(1)
+        ).distinct()
+        var courtCornersPx: List<PointF>? = null
+        var anchorFrame = framesAll.first().bitmap
+        for (pi in probeIndexes) {
+            val probe = framesAll[pi.coerceIn(0, framesAll.size - 1)].bitmap
+            onPreviewFrame(probe.copy(Bitmap.Config.ARGB_8888, true))
+            delay(150)
+            onStage(StageUpdate(AnalysisPhase.COURT, 0, 30f + 20f * (probeIndexes.indexOf(pi) + 1) / probeIndexes.size, 11f + 6f * (probeIndexes.indexOf(pi) + 1) / probeIndexes.size))
+            val r = CourtAutoCalibrator.calibrate(probe)
+            if (r != null) {
+                courtCornersPx = r
+                anchorFrame = probe
+                break
+            }
+        }
         onStage(StageUpdate(AnalysisPhase.COURT, 1, 60f, 17f))
         delay(150)
         onStage(StageUpdate(AnalysisPhase.COURT, 2, 80f, 21f))
         delay(150)
 
-        var courtCornersPx: List<PointF>? = CourtAutoCalibrator.calibrate(anchorFrame)
         if (courtCornersPx == null) {
             throw AnalysisException(
                 AnalysisError(
@@ -311,7 +325,7 @@ class VideoAnalyzer {
             hits = hits,
             summary = summary,
             analysisDurationMs = System.currentTimeMillis() - startTime,
-            appVersion = "2.3.0",
+            appVersion = "2.4.0",
             frameWidth = w,
             frameHeight = h,
             frameAtMaxSpeed = frameAtMax
