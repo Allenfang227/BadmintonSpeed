@@ -1,5 +1,6 @@
 package com.badmintonspeed.app.analysis
 
+import android.graphics.RectF
 import com.badmintonspeed.app.domain.BallPoint
 import com.badmintonspeed.app.domain.HitAnalysis
 import com.badmintonspeed.app.domain.HitType
@@ -8,23 +9,34 @@ import kotlin.math.atan2
 import kotlin.math.sqrt
 
 /**
- * 击球检测器：
+ * 击球检测器 v2（增强物理合理性 + 击球动作识别）：
+ *
  * 原理（文档 5.3.4）：
  * 1. 球速突然增大（速度局部峰值 + 超过阈值）=> 击球
  * 2. 两次击球之间保持最小帧间隔
- * MVP 版本：仅基于球速峰值，过滤误检。
+ *
+ * v2 增强（用户要求"识别运动员击球动作 + 轨迹必须物理合理"）：
+ * 3. 击球动作识别：传入运动员运动区域（帧差检测），击球点应发生在球拍/球员附近，
+ *    离所有球员都远的候选击球点置信度打折（避免把背景噪点当击球）
+ * 4. 轨迹物理校验：一个有效击球，球必须从一边飞向另一边——
+ *    - 方向单调：courtY 方向不来回反转超过 2 次（打转的混乱轨迹直接剔除）
+ *    - 飞行距离：击球点→落点距离 ≥ 1.0m（球必须真的飞出去，不能原地抖）
+ *    - 落点判定：轨迹最后一点在标准球场内 => IN，否则 OUT
  */
 class HitDetector(
     private val minSpeedKmh: Float = 80f,
     private val minAccelerationKmh: Float = 20f,
-    private val minIntervalFrames: Int = 15
+    private val minIntervalFrames: Int = 15,
+    private val minFlightMeters: Float = 1.0f,
+    private val maxDirectionReversals: Int = 2
 ) {
 
     /**
      * @param points 带速度的轨迹点（speedKmh 已填充）
-     * @return 击球列表
+     * @param playerRects 运动员运动区域（可选，用于击球动作识别）
+     * @return 击球列表（已做物理校验）
      */
-    fun detect(points: List<BallPoint>): List<HitAnalysis> {
+    fun detect(points: List<BallPoint>, playerRects: List<RectF>? = null): List<HitAnalysis> {
         val hits = ArrayList<HitAnalysis>()
         if (points.size < 8) return hits
         val n = points.size
@@ -46,7 +58,7 @@ class HitDetector(
             lastHitIndex = i
             hitNumber++
 
-            // 击球后窗口：取击球点及之后若干帧，统计最大/平均速度与角度
+            // 击球后窗口：击球点及之后若干帧
             val end = minOf(n - 1, i + 10)
             val window = points.subList(i, end + 1)
             val speeds = window.mapNotNull { it.speedKmh }
@@ -63,8 +75,56 @@ class HitDetector(
                 else Math.toDegrees(atan2(dy.toDouble(), dx.toDouble())).toFloat()
             }
 
+            // ---- 轨迹物理校验：取击球点→落点整段轨迹 ----
+            // 落点：轨迹后续方向变化趋于平缓的点（简化：后续 10 帧内最后一个点，或速度显著下降后的点）
+            var landIdx = end
+            for (k in i + 2 until end) {
+                val sp = points[k].speedKmh ?: 0f
+                if (sp < maxSpeed * 0.55f) { landIdx = k; break }
+            }
+            val traj = points.subList(maxOf(0, i - 2), landIdx + 1)
+            if (traj.size < 3) continue
+
+            // 1) 方向单调性：courtY 方向反转计数（打转剔除）
+            var reversals = 0
+            var lastDir = 0
+            for (k in 1 until traj.size) {
+                val dy = traj[k].courtY - traj[k - 1].courtY
+                if (abs(dy) < 0.05f) continue
+                val dir = if (dy > 0) 1 else -1
+                if (lastDir != 0 && dir != lastDir) reversals++
+                lastDir = dir
+            }
+            if (reversals > maxDirectionReversals) continue
+
+            // 2) 飞行距离：击球点→落点 ≥ minFlightMeters（球真的飞出去了）
+            val startP = traj.first()
+            val landP = traj.last()
+            val flightM = sqrt(
+                (landP.courtX - startP.courtX) * (landP.courtX - startP.courtX) +
+                (landP.courtY - startP.courtY) * (landP.courtY - startP.courtY)
+            )
+            if (flightM < minFlightMeters) continue
+
+            // 3) 落点 IN/OUT：标准双打场地 6.10 x 13.40
+            val inCourt = landP.courtX in 0f..6.10f && landP.courtY in 0f..13.40f
+
+            // ---- 击球动作识别（运动员区域关联）----
+            var actionConfidence = 1f
+            if (playerRects != null && playerRects.isNotEmpty()) {
+                val hitPx = points[i]
+                var minDist = Float.MAX_VALUE
+                for (r in playerRects) {
+                    val dx = hitPx.x - r.centerX()
+                    val dy = hitPx.y - r.centerY()
+                    val d = sqrt(dx * dx + dy * dy)
+                    if (d < minDist) minDist = d
+                }
+                // 击球点离最近运动员超过帧宽 30% => 击球动作置信度降低（可能是噪点）
+                actionConfidence = if (minDist < 320f) 1f else 0.5f
+            }
+
             val type = classify(maxSpeed, angleDeg)
-            val traj = points.subList(maxOf(0, i - 2), end + 1)
             hits.add(
                 HitAnalysis(
                     id = "hit_${String.format("%03d", hitNumber)}",

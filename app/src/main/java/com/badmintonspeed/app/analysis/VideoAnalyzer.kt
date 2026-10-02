@@ -374,8 +374,9 @@ class VideoAnalyzer {
             else p.copy(speedKmh = speedCalc.instantSpeed(rawPoints[i - 1], p))
         }
         delay(120)
+        // 击球动作识别（用户要求）：复用阶段5的人员检测结果，用运动员区域关联击球点
         onStage(StageUpdate(AnalysisPhase.HIT, 1, 60f, 95f))
-        val hits = HitDetector().detect(points)
+        val hits = HitDetector().detect(points, playerRects)
         val smashFrames = hits.filter { it.hitType == HitType.SMASH }
             .flatMap { it.trajectory.map { tp -> tp.frame } }
             .toSet()
@@ -404,7 +405,7 @@ class VideoAnalyzer {
             hits = hits,
             summary = summary,
             analysisDurationMs = System.currentTimeMillis() - startTime,
-            appVersion = "2.10.0",
+            appVersion = "2.11.0",
             frameWidth = w,
             frameHeight = h,
             frameAtMaxSpeed = frameAtMax

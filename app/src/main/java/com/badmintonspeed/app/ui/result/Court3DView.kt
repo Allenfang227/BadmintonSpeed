@@ -16,6 +16,7 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import com.badmintonspeed.app.domain.AnalysisResult
+import com.badmintonspeed.app.domain.HitAnalysis
 import com.badmintonspeed.app.ui.theme.Primary
 import com.badmintonspeed.app.ui.theme.TrailYellow
 import kotlin.math.PI
@@ -24,12 +25,21 @@ import kotlin.math.min
 import kotlin.math.sin
 
 /**
- * 右上角 3D 可拖拽实时模拟回放（图6-9）：
- * 羽毛球场地 3D 透视投影，支持拖拽旋转（水平转 yaw / 垂直转 pitch），
- * 随播放进度实时运动：球从远端飞向近端，还原整段飞行轨迹回放。
+ * 右上角 3D 实时模拟回放 v2（用户要求"不是几条线，是真正意义上的场地模拟"）：
+ * - 完整标准球场：外边界、双打后发球线、前发球线、单打边线、中线、球网（加粗+立柱+"球网"标注）
+ * - 只画当前选中球的轨迹（从击球点→落点），不是所有轨迹混在一起
+ * - 落点 IN/OUT 大标记 + 文字（绿=界内 / 红=界外）
+ * - SHOT n/m 球号标注；支持 360° 拖拽旋转
  */
 @Composable
-fun Court3DView(result: AnalysisResult, progressMs: Long, modifier: Modifier) {
+fun Court3DView(
+    result: AnalysisResult,
+    currentHit: HitAnalysis?,
+    hitIndex: Int,
+    hitCount: Int,
+    progressMs: Long,
+    modifier: Modifier
+) {
     var yaw by remember { mutableStateOf(0f) }
     var pitch by remember { mutableStateOf(0.55f) }
     var size by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
@@ -69,11 +79,11 @@ fun Court3DView(result: AnalysisResult, progressMs: Long, modifier: Modifier) {
             return Offset(cx + rx * persp * zoom / 1.8f, cy + sy * persp * zoom / 1.8f)
         }
 
-        // ---- 场地绘制 ----
+        // ---- 完整场地绘制（标准羽毛球场所有线） ----
         val lineColor = Color(0xAAFFFFFF)
         val s2 = 1.5f
 
-        // 外框（双打全场）
+        // 外边界（双打全场 6.10 x 13.40）
         drawLine(lineColor, project(0f, 0f, 0f), project(W, 0f, 0f), s2)
         drawLine(lineColor, project(W, 0f, 0f), project(W, L, 0f), s2)
         drawLine(lineColor, project(W, L, 0f), project(0f, L, 0f), s2)
@@ -81,65 +91,97 @@ fun Court3DView(result: AnalysisResult, progressMs: Long, modifier: Modifier) {
 
         // 中线
         drawLine(Color(0x88FFFFFF), project(W / 2f, 0f, 0f), project(W / 2f, L, 0f), 1.2f)
-        // 网（中部）
-        drawLine(Primary, project(0f, L / 2f, 0f), project(W, L / 2f, 0f), 3.5f)
-        // 前发球线 / 后发球线
-        drawLine(Color(0x66FFFFFF), project(0f, L * 0.28f, 0f), project(W, L * 0.28f, 0f), 1f)
-        drawLine(Color(0x66FFFFFF), project(0f, L * 0.72f, 0f), project(W, L * 0.72f, 0f), 1f)
-        // 单打边线
-        drawLine(Color(0x55FFFFFF), project(W * 0.21f, 0f, 0f), project(W * 0.21f, L, 0f), 0.8f)
-        drawLine(Color(0x55FFFFFF), project(W * 0.79f, 0f, 0f), project(W * 0.79f, L, 0f), 0.8f)
+        // 前发球线（4.72 / 8.68）
+        drawLine(Color(0x66FFFFFF), project(0f, 4.72f, 0f), project(W, 4.72f, 0f), 1f)
+        drawLine(Color(0x66FFFFFF), project(0f, 8.68f, 0f), project(W, 8.68f, 0f), 1f)
+        // 双打后发球线（0.76 / 12.64）
+        drawLine(Color(0x66FFFFFF), project(0f, 0.76f, 0f), project(W, 0.76f, 0f), 1f)
+        drawLine(Color(0x66FFFFFF), project(0f, 12.64f, 0f), project(W, 12.64f, 0f), 1f)
+        // 单打边线（0.46 / 5.64）
+        drawLine(Color(0x55FFFFFF), project(0.46f, 0f, 0f), project(0.46f, L, 0f), 0.8f)
+        drawLine(Color(0x55FFFFFF), project(5.64f, 0f, 0f), project(5.64f, L, 0f), 0.8f)
 
-        // ---- 轨迹回放（黄色流光，随进度实时运动） ----
-        val pts = result.trajectory
-        if (pts.size >= 2) {
-            val tNow = progressMs / 1000.0
-            val visible = pts.filter { it.timeSec <= tNow + 0.03 }
+        // ---- 球网（加粗 + 立柱 + 标注，用户要求"加上球网的标注"） ----
+        val netY = 6.70f
+        val netP1 = project(0f, netY, 0.3f)
+        val netP2 = project(W, netY, 0.3f)
+        drawLine(Primary, netP1, netP2, 6f, cap = StrokeCap.Round)
+        // 网下沿 + 两侧立柱
+        drawLine(Color(0x99FFFFFF), project(0f, netY, 0f), project(W, netY, 0f), 1f)
+        drawLine(Primary, project(0f, netY, 0f), netP1, 4f)
+        drawLine(Primary, project(W, netY, 0f), netP2, 4f)
 
-            // 已飞行轨迹线（黄色光带）
-            for (i in 1 until visible.size) {
-                val a = project(visible[i - 1].courtX, visible[i - 1].courtY, 0f)
-                val b = project(visible[i].courtX, visible[i].courtY, 0f)
-                drawLine(
-                    color = Color(0xFFFFD60A).copy(alpha = 0.75f),
-                    start = a,
-                    end = b,
-                    strokeWidth = 2.5f,
-                    cap = StrokeCap.Round
+        // ---- 当前选中球的轨迹（从击球点→落点） ----
+        currentHit?.let { hit ->
+            val traj = hit.trajectory
+            if (traj.size >= 2) {
+                // 飞行轨迹（黄色光带）：近端→远端 z 抛物线模拟
+                val t0 = traj.first().timeSec
+                val t1 = traj.last().timeSec
+                val span = (t1 - t0).coerceAtLeast(0.001)
+                for (i in 1 until traj.size) {
+                    val a = traj[i - 1]
+                    val b = traj[i]
+                    // 抛物线高度：轨迹中点最高
+                    val za = 1.8f * sin(PI.toFloat() * ((a.timeSec - t0) / span).toFloat().coerceIn(0f, 1f))
+                    val zb = 1.8f * sin(PI.toFloat() * ((b.timeSec - t0) / span).toFloat().coerceIn(0f, 1f))
+                    drawLine(
+                        color = Color(0xFFFFD60A).copy(alpha = 0.85f),
+                        start = project(a.courtX, a.courtY, za),
+                        end = project(b.courtX, b.courtY, zb),
+                        strokeWidth = 3f,
+                        cap = StrokeCap.Round
+                    )
+                }
+                // 当前播放进度对应的球位
+                val tNow = progressMs / 1000.0
+                val visible = traj.filter { it.timeSec <= tNow + 0.03 }
+                visible.lastOrNull()?.let { cur ->
+                    val frac = ((cur.timeSec - t0) / span).toFloat().coerceIn(0f, 1f)
+                    val hz = 1.8f * sin(PI * frac).toFloat()
+                    val p = project(cur.courtX, cur.courtY, hz)
+                    drawCircle(Color(0x33FFD60A), radius = 16f, center = p)
+                    drawCircle(Color(0x66FFD60A), radius = 9f, center = p)
+                    drawCircle(TrailYellow, radius = 5f, center = p)
+                }
+            }
+
+            // ---- 落点 IN/OUT 大标记 ----
+            val land = traj.lastOrNull()
+            if (land != null) {
+                val inCourt = land.courtX in 0f..6.10f && land.courtY in 0f..13.40f
+                val landColor = if (inCourt) Color(0xFF4ADE80) else Color(0xFFEF4444)
+                val lp = project(land.courtX, land.courtY, 0f)
+                drawCircle(landColor, radius = 10f, center = lp, style = Stroke(width = 3.5f))
+                drawCircle(landColor, radius = 4f, center = lp)
+                val label = if (inCourt) "IN" else "OUT"
+                val labelPaint = android.graphics.Paint().apply {
+                    setColor(if (inCourt) 0xFF4ADE80.toInt() else 0xFFEF4444.toInt())
+                    textSize = 18f
+                    isAntiAlias = true
+                    typeface = android.graphics.Typeface.DEFAULT_BOLD
+                }
+                drawContext.canvas.nativeCanvas.drawText(
+                    label,
+                    lp.x + 12f,
+                    lp.y + 6f,
+                    labelPaint
                 )
             }
-
-            // 当前球位（抛物线高度模拟 + 光晕）
-            val cur = visible.lastOrNull()
-            if (cur != null) {
-                val tailLen = pts.last().timeSec - pts.first().timeSec
-                val frac = ((cur.timeSec - pts.first().timeSec) / tailLen.coerceAtLeast(0.001)).toFloat()
-                val hz = 1.6f * sin(PI * frac.coerceIn(0f, 1f)).toFloat()
-                val p = project(cur.courtX, cur.courtY, hz)
-                drawCircle(Color(0x33FFD60A), radius = 16f, center = p)
-                drawCircle(Color(0x66FFD60A), radius = 9f, center = p)
-                drawCircle(TrailYellow, radius = 5f, center = p)
-            }
         }
 
-        // 落点标记（最后一个轨迹点 IN/OUT）
-        pts.lastOrNull()?.let { last ->
-            val lp = project(last.courtX, last.courtY, 0f)
-            val inCourt = last.courtX in 0f..6.10f && last.courtY in 0f..13.40f
-            drawCircle(
-                color = if (inCourt) Color(0xFF4ADE80) else Color(0xFFEF4444),
-                radius = 7f,
-                center = lp,
-                style = Stroke(width = 2.5f)
-            )
-        }
-
-        // 标注
+        // ---- 标注：球号 + 旋转提示 ----
         val tagPaint = android.graphics.Paint().apply {
             color = 0xFF9FB3A7.toInt()
-            textSize = 16f
+            textSize = 15f
             isAntiAlias = true
         }
+        drawContext.canvas.nativeCanvas.drawText(
+            "SHOT ${hitIndex + 1}/$hitCount",
+            14f,
+            20f,
+            tagPaint
+        )
         drawContext.canvas.nativeCanvas.drawText("360°拖动旋转", 14f, h - 12f, tagPaint)
     }
 }

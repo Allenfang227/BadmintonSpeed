@@ -86,6 +86,10 @@ fun ResultScreen(vm: MainViewModel) {
     var progressMs by remember { mutableLongStateOf(0L) }
     var playing by remember { mutableStateOf(true) }
     var showTrail by remember { mutableStateOf(true) }
+    // 当前选中球（用户要求：每个球的速度都会变，右上角按球切换）
+    val hits = result.hits
+    val defaultHitIdx = (hits.indices.maxByOrNull { hits[it].maxSpeedKmh } ?: 0).coerceAtLeast(0)
+    var currentHitIndex by remember { mutableStateOf(if (hits.isEmpty()) -1 else defaultHitIdx) }
     val mediaPlayer = remember { MediaPlayer() }
 
     val frameTimeMs = (1000f / result.videoInfo.fps.coerceAtLeast(1f)).toLong()
@@ -139,22 +143,25 @@ fun ResultScreen(vm: MainViewModel) {
         playing = !playing
     }
 
-    // ---- 实时数据（图6-9：SHOT SPEED / LIVE SPEED / IN-OUT） ----
-    val (shotSpeed, liveSpeed, isIn) = remember(result) {
-        data class Live(
-            val shot: Float,
-            val live: Float,
-            val inCourt: Boolean
-        )
-        val p = result.trajectory
-        val maxP = p.maxByOrNull { it.speedKmh ?: 0f }
-        Live(
-            shot = maxP?.speedKmh ?: 0f,
-            live = p.lastOrNull()?.speedKmh ?: 0f,
-            inCourt = p.lastOrNull()?.let { pt ->
-                pt.courtX in 0f..6.10f && pt.courtY in 0f..13.40f
-            } ?: true
-        )
+    // ---- 实时数据 v2：按当前选中球计算（SHOT = 该球最大速度，LIVE = 播放进度实时速度，IN/OUT = 该球落点） ----
+    val shotSpeed: Float
+    val liveSpeed: Float
+    val isIn: Boolean
+    if (hits.isNotEmpty() && currentHitIndex in hits.indices) {
+        val hit = hits[currentHitIndex]
+        shotSpeed = hit.maxSpeedKmh
+        // LIVE：当前播放进度在球轨迹中的实时速度（未到击球时刻前显示该球最大速度，过落点后显示落点速度）
+        val tNow = progressMs / 1000.0
+        val hitPoints = hit.trajectory
+        val liveP = hitPoints.lastOrNull { it.timeSec <= tNow + 0.03 }
+        liveSpeed = liveP?.speedKmh ?: hit.avgSpeedKmh
+        val land = hitPoints.lastOrNull()
+        isIn = land?.let { it.courtX in 0f..6.10f && it.courtY in 0f..13.40f } ?: true
+    } else {
+        val maxP = result.trajectory.maxByOrNull { it.speedKmh ?: 0f }
+        shotSpeed = maxP?.speedKmh ?: 0f
+        liveSpeed = result.trajectory.lastOrNull()?.speedKmh ?: 0f
+        isIn = true
     }
 
     Box(Modifier.fillMaxSize().background(Color(0xFF08100C))) {
@@ -216,6 +223,14 @@ fun ResultScreen(vm: MainViewModel) {
                         SpeedTag("SHOT SPEED", shotSpeed)
                         Spacer(Modifier.width(14.dp))
                         SpeedTag("LIVE SPEED", liveSpeed)
+                        Spacer(Modifier.width(10.dp))
+                        // IN/OUT 落点判定（用户要求：选了设置选项后显示 in 和 out）
+                        Text(
+                            text = if (isIn) "IN" else "OUT",
+                            color = if (isIn) Color(0xFF4ADE80) else Color(0xFFEF4444),
+                            fontSize = 16.sp,
+                            fontWeight = FontWeight.Black
+                        )
                     }
                 }
             }
@@ -231,6 +246,9 @@ fun ResultScreen(vm: MainViewModel) {
             ) {
                 Court3DView(
                     result = result,
+                    currentHit = if (currentHitIndex in hits.indices) hits[currentHitIndex] else null,
+                    hitIndex = currentHitIndex.coerceAtLeast(0),
+                    hitCount = hits.size,
                     progressMs = progressMs,
                     modifier = Modifier.fillMaxSize().padding(8.dp)
                 )
@@ -265,7 +283,9 @@ fun ResultScreen(vm: MainViewModel) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 ControlButton("TRAJ FX", highlight = showTrail) { showTrail = !showTrail }
-                ControlButton("PREV FRAME") { stepFrame(-frameTimeMs) }
+                ControlButton("PREV SHOT", highlight = false) {
+                    if (hits.isNotEmpty()) currentHitIndex = (currentHitIndex - 1 + hits.size) % hits.size
+                }
                 // 播放/暂停（图7 中央）
                 Surface(
                     shape = CircleShape,
@@ -276,7 +296,9 @@ fun ResultScreen(vm: MainViewModel) {
                         Text(if (playing) "❚❚" else "▶", color = Color(0xFF06120A), fontSize = 16.sp, fontWeight = FontWeight.Bold)
                     }
                 }
-                ControlButton("NEXT FRAME") { stepFrame(frameTimeMs) }
+                ControlButton("NEXT SHOT", highlight = false) {
+                    if (hits.isNotEmpty()) currentHitIndex = (currentHitIndex + 1) % hits.size
+                }
                 ControlButton("DOWNLOAD") { downloadResult(context, result) }
             }
         }
