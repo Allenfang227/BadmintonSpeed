@@ -114,6 +114,23 @@ fun AnalysisScreen(vm: MainViewModel) {
                 ) {
                     Text(speeds[speedIdx], color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                 }
+                // 预处理提示（图1：先处理视频 -> 正在检测重复帧 xx%）
+                val preprocessText = when {
+                    totalPct < 4f -> "正在处理视频 ${(totalPct / 4f * 100).toInt().coerceIn(0, 99)}%"
+                    totalPct < 8f -> "正在检测重复帧 ${((totalPct - 4f) / 4f * 100).toInt().coerceIn(0, 99)}%"
+                    else -> null
+                }
+                preprocessText?.let {
+                    Box(
+                        Modifier
+                            .align(Alignment.BottomCenter)
+                            .padding(bottom = 20.dp)
+                            .background(Color(0x99000000), RoundedCornerShape(8.dp))
+                            .padding(horizontal = 14.dp, vertical = 7.dp)
+                    ) {
+                        Text(it, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
                 // 底部细进度条
                 Box(
                     Modifier

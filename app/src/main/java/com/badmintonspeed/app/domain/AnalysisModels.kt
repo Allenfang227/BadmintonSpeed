@@ -139,6 +139,24 @@ data class StageUpdate(
     val done: Boolean = false // 模块是否完成
 )
 
+/**
+ * 分析错误（带错误码，对应不同的失败原因）：
+ *   E001 视频解码失败/过短
+ *   E002 重复帧过多（视频几乎静止，无法测速）
+ *   E101 场地检测失败（未找到足够场地线）
+ *   E201 羽毛球检测帧数不足（未稳定检测到羽毛球轨迹）
+ *   E202 轨迹点数不足（跟丢严重）
+ */
+data class AnalysisError(
+    val code: String,
+    val title: String,
+    val detail: String,
+    val threshold: String // 判定阈值/输出说明
+) {
+    val display: String
+        get() = "[$code] $title\n$detail\n（判定阈值：$threshold）"
+}
+
 object SpeedUnitConverter {
     fun fromKmh(kmh: Float, unit: SpeedUnit): Float = when (unit) {
         SpeedUnit.KMH -> kmh

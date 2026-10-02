@@ -10,6 +10,7 @@ import com.badmintonspeed.app.analysis.VideoAnalyzer
 import com.badmintonspeed.app.data.HistoryRepository
 import com.badmintonspeed.app.data.ResultJson
 import com.badmintonspeed.app.data.SettingsRepository
+import com.badmintonspeed.app.domain.AnalysisError
 import com.badmintonspeed.app.domain.AnalysisRecord
 import com.badmintonspeed.app.domain.AnalysisResult
 import com.badmintonspeed.app.domain.PerformanceMode
@@ -63,11 +64,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _previewFrame = MutableStateFlow<Bitmap?>(null)
     val previewFrame: StateFlow<Bitmap?> = _previewFrame
 
-    // 结果与错误
+    // 结果与错误（错误带错误码，对应不同失败原因）
     private val _result = MutableStateFlow<AnalysisResult?>(null)
     val result: StateFlow<AnalysisResult?> = _result
-    private val _error = MutableStateFlow<String?>(null)
-    val error: StateFlow<String?> = _error
+    private val _error = MutableStateFlow<AnalysisError?>(null)
+    val error: StateFlow<AnalysisError?> = _error
 
     // 历史
     private val _records = MutableStateFlow<List<AnalysisRecord>>(emptyList())
@@ -97,7 +98,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     _videoFile.value = target
                     true
                 }.getOrElse { e ->
-                    _error.value = "视频导入失败：${e.message}"
+                    _error.value = AnalysisError(
+                        code = "E000",
+                        title = "视频导入失败",
+                        detail = e.message ?: "无法读取所选视频",
+                        threshold = "需要可读的视频文件（mp4/3gp 等）"
+                    )
                     false
                 }
             }
@@ -108,7 +114,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** 启动分析（AI 自动标定场地 + YOLO11 真实检测，分模块实时进度） */
     fun startAnalysis() {
         val file = _videoFile.value ?: run {
-            _error.value = "请先选择视频"; return
+            _error.value = AnalysisError("E000", "提示", "请先选择视频", "需要选择视频后开始测速")
+            return
         }
         cancelFlag.set(false)
         _stage.value = null
@@ -147,9 +154,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 _screen.value = Screen.Result
             } catch (ce: CancellationException) {
                 throw ce
+            } catch (e: VideoAnalyzer.AnalysisException) {
+                if (!cancelFlag.get()) {
+                    _error.value = e.error
+                    _screen.value = Screen.Home
+                }
             } catch (e: Exception) {
                 if (!cancelFlag.get()) {
-                    _error.value = e.message ?: "分析失败，请重试"
+                    _error.value = AnalysisError(
+                        code = "E999",
+                        title = "分析失败",
+                        detail = e.message ?: "未知错误，请重试",
+                        threshold = "请重试或更换视频"
+                    )
                     _screen.value = Screen.Home
                 }
             }

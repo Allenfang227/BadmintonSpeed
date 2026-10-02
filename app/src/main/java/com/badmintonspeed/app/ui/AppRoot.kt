@@ -42,6 +42,7 @@ import com.badmintonspeed.app.ui.result.ResultScreen
 import com.badmintonspeed.app.ui.settings.SettingsScreen
 import com.badmintonspeed.app.ui.theme.Background
 import com.badmintonspeed.app.ui.theme.DividerColor
+import com.badmintonspeed.app.ui.theme.Error
 import com.badmintonspeed.app.ui.theme.OnSurfaceVariant
 import com.badmintonspeed.app.ui.theme.Primary
 import com.badmintonspeed.app.ui.theme.Surface
@@ -224,11 +225,17 @@ private fun NavRow(label: String, selected: Boolean, onClick: () -> Unit, danger
 }
 
 @Composable
-private fun ErrorDialog(message: String, onDismiss: () -> Unit) {
+private fun ErrorDialog(error: com.badmintonspeed.app.domain.AnalysisError, onDismiss: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("提示") },
-        text = { Text(message) },
+        title = { Text("提示  ${error.code}", color = Error) },
+        text = {
+            Text(
+                "${error.title}\n\n${error.detail}\n\n（判定阈值：${error.threshold}）",
+                fontSize = 13.sp,
+                lineHeight = 19.sp
+            )
+        },
         confirmButton = { TextButton(onClick = onDismiss) { Text("知道了") } }
     )
 }

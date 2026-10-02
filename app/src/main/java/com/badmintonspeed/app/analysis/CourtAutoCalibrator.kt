@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import android.graphics.PointF
 import kotlin.math.PI
 import kotlin.math.abs
+import kotlin.math.atan2
 import kotlin.math.ceil
 import kotlin.math.cos
 import kotlin.math.max
@@ -141,23 +142,29 @@ object CourtAutoCalibrator {
         val clusterB = strong.filter { angleDiff(it.thetaDeg, vert.thetaDeg) <= 14.0 }
         if (clusterA.size < 2 || clusterB.size < 2) return null
 
-        // ---- 6) RANSAC 思想：每组取支持密集的两端作为边界线 ----
+        // ---- 6) RANSAC 思想：每组取支持密集的两端作为边界线，再用实际白线像素最小二乘精修 ----
         val aRhos = clusterA.map { it.rho }.sorted()
         val bRhos = clusterB.map { it.rho }.sorted()
-        val a1 = quantile(aRhos, 0.12)
-        val a2 = quantile(aRhos, 0.88)
-        val b1 = quantile(bRhos, 0.12)
-        val b2 = quantile(bRhos, 0.88)
+        val a1 = quantile(aRhos, 0.15)
+        val a2 = quantile(aRhos, 0.85)
+        val b1 = quantile(bRhos, 0.15)
+        val b2 = quantile(bRhos, 0.85)
         if (abs(a2 - a1) < 8 || abs(b2 - b1) < 8) return null
 
         val thetaA = top.thetaDeg * PI / 180.0
         val thetaB = vert.thetaDeg * PI / 180.0
 
+        // 边界线精修：对每条初始线，收集附近（<5px）的掩码白线像素，最小二乘重拟合，使框线贴合场地线
+        val refinedA1 = refineLine(mask, W, H, a1, thetaA)
+        val refinedA2 = refineLine(mask, W, H, a2, thetaA)
+        val refinedB1 = refineLine(mask, W, H, b1, thetaB)
+        val refinedB2 = refineLine(mask, W, H, b2, thetaB)
+
         // ---- 7) 两两求交 ----
         val pts = ArrayList<PointF>()
-        for (ra in listOf(a1, a2)) {
-            for (rb in listOf(b1, b2)) {
-                val inter = intersect(ra, thetaA, rb, thetaB) ?: continue
+        for (ra in listOf(refinedA1, refinedA2)) {
+            for (rb in listOf(refinedB1, refinedB2)) {
+                val inter = intersect(ra.first, ra.second, rb.first, rb.second) ?: continue
                 pts.add(inter)
             }
         }
@@ -183,6 +190,49 @@ object CourtAutoCalibrator {
         var d = abs(a - b) % 180.0
         if (d > 90) d = 180 - d
         return d
+    }
+
+    /**
+     * 边界线精修：以 (rho, theta) 为初始线，收集掩码中距离 < 5px 的白线像素，
+     * 用最小二乘重新拟合，让检测框线贴合实际场地线。
+     * @return Pair(rho, theta) 精修后的直线
+     */
+    private fun refineLine(mask: BooleanArray, W: Int, H: Int, rho0: Double, theta0: Double): Pair<Double, Double> {
+        val cosT = cos(theta0)
+        val sinT = sin(theta0)
+        val xs = ArrayList<Float>()
+        val ys = ArrayList<Float>()
+        // 采样掩码像素，收集距初始线 < 5px 的点
+        for (y in 0 until H step 2) {
+            for (x in 0 until W step 2) {
+                if (!mask[y * W + x]) continue
+                val d = abs(x * cosT + y * sinT - rho0)
+                if (d < 5.0) {
+                    xs.add(x.toFloat())
+                    ys.add(y.toFloat())
+                }
+            }
+        }
+        if (xs.size < 40) return rho0 to theta0 // 支持点不足，保留原线
+        // 最小二乘拟合：把线参数化为点集投影主方向
+        // 计算均值与协方差，主轴即精修后的直线方向
+        var mx = 0.0; var my = 0.0
+        for (i in xs.indices) { mx += xs[i]; my += ys[i] }
+        mx /= xs.size; my /= ys.size
+        var sxx = 0.0; var syy = 0.0; var sxy = 0.0
+        for (i in xs.indices) {
+            val dx = xs[i] - mx; val dy = ys[i] - my
+            sxx += dx * dx; syy += dy * dy; sxy += dx * dy
+        }
+        // 协方差矩阵特征向量（主轴）角度
+        val theta = 0.5 * atan2(2 * sxy, sxx - syy)
+        // 归一化到与 theta0 同向（相差 < 90 度）
+        var t = theta
+        var dt = abs(t - theta0) % PI
+        if (dt > PI / 2) dt = PI - dt
+        if (dt > PI / 4) t += PI / 2
+        val rho = mx * cos(t) + my * sin(t)
+        return rho to t
     }
 
     /** 稳健分位数（支持点较少的输入） */

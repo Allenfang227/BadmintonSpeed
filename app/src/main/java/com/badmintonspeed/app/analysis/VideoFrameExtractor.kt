@@ -27,13 +27,15 @@ class VideoFrameExtractor {
      * @param maxAnalysisSeconds 最多分析的视频时长（秒）
      * @param maxDimension 帧长边最大值（降采样，提升处理速度）
      * @param onProgress (processed, total) 帧提取进度
+     * @param onPreview 每提取若干帧回调一帧（让分析过程实时显示视频，避免"开始无画面"）
      */
     fun extract(
         file: File,
         analysisFps: Int,
         maxAnalysisSeconds: Int = 120,
         maxDimension: Int = 960,
-        onProgress: (Int, Int) -> Unit = { _, _ -> }
+        onProgress: (Int, Int) -> Unit = { _, _ -> },
+        onPreview: (Bitmap) -> Unit = {}
     ): ExtractedVideo {
         val retriever = MediaMetadataRetriever()
         try {
@@ -69,11 +71,16 @@ class VideoFrameExtractor {
                     val bmp = downscale(raw, maxDimension)
                     if (raw !== bmp) raw.recycle()
                     frames.add(AnalyzedFrame(idx, tMs, bmp))
+                    // 每约 12 帧回传一帧预览，让用户始终看到视频
+                    if (frames.size % 12 == 0) onPreview(bmp)
                 }
                 onProgress(frames.size, sampleCount)
                 tMs += stepMs.toLong()
                 idx++
             }
+
+            // 若视频很短，确保至少回传首帧
+            if (frames.isNotEmpty() && frames.size % 12 != 0) onPreview(frames.first().bitmap)
 
             // 帧率修正：以实际采样帧数计算
             val actualFps = if (frames.size > 1) {
