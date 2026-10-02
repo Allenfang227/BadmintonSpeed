@@ -161,10 +161,15 @@ class VideoAnalyzer {
         var anchorFrame = framesAll.first().bitmap
 
         if (manualCourtCorners != null) {
-            // 用户手动标定的角点（融合自 AI-YuJian-AI：人工点4角 + 透视变换补全）
-            courtCornersPx = manualCourtCorners
+            // 用户手动标定的角点（融合自 AI-YuJian-AI：人工点4角 + 透视变换补全）。
+            // 不是死套模板：AI 在用户框起来的4个区域附近搜索连续长白线，精修出准确贴合线的角点
+            val anchorForRefine = framesAll.first().bitmap
             onStage(StageUpdate(AnalysisPhase.COURT, 0, 50f, 12f))
-            delay(100)
+            courtCornersPx = try {
+                LocalLineRefiner.refine(anchorForRefine, manualCourtCorners)
+            } catch (e: Exception) {
+                manualCourtCorners // 精修异常回退用户原始角点
+            }
             onStage(StageUpdate(AnalysisPhase.COURT, 1, 80f, 20f))
             delay(100)
         } else {
@@ -300,13 +305,17 @@ class VideoAnalyzer {
             } else {
                 boxes.firstOrNull()?.let { lastBall = it.cx to it.cy }
             }
-            // 实时预览帧（带球检测框），每约 10 帧刷新一次
+            // 实时预览帧：只画跟踪确认的唯一球框（每帧一个框，不叠加历史候选）
             if (i % 10 == 0) {
                 val bmp = frame.bitmap.copy(Bitmap.Config.ARGB_8888, true)
                 val bcv = Canvas(bmp)
-                for (b in boxes.take(3)) {
-                    val l = b.cx - b.w / 2f; val t = b.cy - b.h / 2f
-                    bcv.drawRect(l, t, l + b.w, t + b.h, ballPaint)
+                if (pos != null) {
+                    val boxSize = 34f
+                    bcv.drawRect(
+                        pos.x - boxSize / 2f, pos.y - boxSize / 2f,
+                        pos.x + boxSize / 2f, pos.y + boxSize / 2f,
+                        ballPaint
+                    )
                 }
                 onPreviewFrame(bmp)
             }
@@ -395,7 +404,7 @@ class VideoAnalyzer {
             hits = hits,
             summary = summary,
             analysisDurationMs = System.currentTimeMillis() - startTime,
-            appVersion = "2.9.0",
+            appVersion = "2.10.0",
             frameWidth = w,
             frameHeight = h,
             frameAtMaxSpeed = frameAtMax
