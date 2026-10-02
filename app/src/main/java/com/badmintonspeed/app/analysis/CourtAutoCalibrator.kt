@@ -14,26 +14,49 @@ import kotlin.math.sin
 import kotlin.math.sqrt
 
 /**
- * AI 自动场地标定 v2.5（对应参考图1 的"场地基准检测"模块）：
+ * AI 自动场地标定 v2.7（对应参考图1 的"场地基准检测"模块）：
  *   Canny边缘检测 -> 霍夫直线变换 -> RANSAC迭代拟合 -> 单应性矩阵计算
  *
- * v2.5 多策略增强（修复 E101 场地检测失败）：
- *   - 策略A：Otsu 自适应阈值白线掩码（常规球馆，蓝色/绿色地胶+白线）
- *   - 策略B：固定阈值 170 白线掩码（过曝/低对比球馆）
- *   - 策略C：Sobel 亮度边缘掩码（线不白/彩线/昏暗球馆，不依赖颜色）
- *   任一策略成功即返回；每个策略内部：
- *   - 方向组枚举：霍夫峰值按角度聚类成多组，枚举夹角 70-110° 的平行线组
- *   - 四边形评分：面积占比 + 沿边白线贴合度综合打分，取最优候选
- *   - 面积下限放宽到 10%（适配远景/竖屏拍摄的小场地）
+ * ABC 三套级联方案（任一成功即返回，防止 E101 反复报错）：
+ *   方案A（标准白线）：Otsu 自适应白线 / 阈值130白线 / 阈值100白线 / Sobel边缘，正常参数
+ *   方案B（宽松边缘）：低阈值 Sobel + 更宽松聚类（20°）+ 更低门槛
+ *   方案C（最后防线）：超低阈值边缘 + 最宽松参数（面积≥2%、贴合度≥0.02）
+ * 每个方案内部都含"部分线+羽毛球先验构造"：
+ *   斜拍远景场地近端角在画面外时，检测到边线组(≥2条平行线)+横线组(≥1条)即可，
+ *   按羽毛球场固定长宽比(13.40m/6.10m≈2.196)沿纵深方向延伸构造完整场地。
+ *
+ * 修改依据：外部专业 AI 建议 6 点全部采纳
+ *   ① 白线阈值放宽：Otsu 100..230、130/100 双低阈值兜底、饱和度差 70→90
+ *   ② 霍夫保留线下限：max(3, maxVotes*8%)，远景小场地不再丢线
+ *   ③ 四边形贴合评分阈值 0.08→0.04
+ *   ④ partialConstruct：副组多条线取离中心最近一条即可构造（不再 return null）
+ *   ⑤ 面积下限 10%→4%（部分构造 6%→3%）
+ *   ⑥ 边长比上限 6.0→10.0（斜拍透视压缩）
+ *   + 多帧探测从 3 帧均匀扩到 8 帧（VideoAnalyzer.kt）
  */
 object CourtAutoCalibrator {
+
+    private const val WORK_MAX_SIDE = 720
+    private const val THETA_STEP_DEG = 2.0
+    private const val WHITE_SAT_DIFF = 90 // 放宽到 90：发黄的场地线饱和度会略高
 
     /** 方向组：同方向直线簇（角度 + 各线到原点距离 rho 列表 + 总投票数） */
     data class DirGroup(val angleDeg: Double, val rhos: List<Double>, val totalVotes: Int)
 
-    private const val WORK_MAX_SIDE = 720
-    private const val THETA_STEP_DEG = 2.0
-    private const val WHITE_SAT_DIFF = 70
+    /** 管道参数集（每套方案一套） */
+    private data class Params(
+        val strongRatio: Double,   // 霍夫保留线阈值（峰值比例，至少3票）
+        val joinDeg: Double,       // 方向组聚类最大夹角（度）
+        val areaMin: Double,       // 场地面积占画面下限
+        val sideMax: Double,       // 长边/短边比上限
+        val scoreMin: Double,      // 四边形贴合评分下限
+        val partialFitMin: Double, // 部分构造贴合度单边下限
+        val partialFitCount: Int   // 部分构造需贴合边数下限
+    )
+
+    private val paramsA = Params(0.08, 12.0, 0.04, 10.0, 0.04, 0.10, 1)
+    private val paramsB = Params(0.05, 20.0, 0.03, 12.0, 0.03, 0.08, 1)
+    private val paramsC = Params(0.04, 30.0, 0.02, 14.0, 0.02, 0.05, 1)
 
     /** 依次返回 左上、右上、右下、左下 四个角点（原图像素坐标），失败返回 null */
     fun calibrate(frame: Bitmap): List<PointF>? {
@@ -59,25 +82,45 @@ object CourtAutoCalibrator {
             sat[i] = max(r, max(g, b)) - min(r, min(g, b))
         }
 
-        // ---- 2) 多策略掩码：任一成功即返回 ----
-        // 策略A：Otsu 自适应白线（常规球馆）
-        val maskA = whiteMask(gray, sat, otsu(gray).coerceIn(150, 215))
-        // 策略B：固定阈值 170 白线（过曝/低对比球馆）
-        val maskB = whiteMask(gray, sat, 170)
-        // 策略C：Sobel 亮度边缘（不依赖颜色，暗场馆/彩线场地可用）
-        val maskC = sobelMask(gray, W, H)
+        // ---- 2) ABC 三套方案级联，任一成功即返回 ----
+        // 方案A：多阈值白线 + Sobel（正常参数）
+        val otsuT = otsu(gray).coerceIn(100, 230) // 下限从150降到100，暗场馆不丢线
+        val masksA = listOf(
+            whiteMask(gray, sat, otsuT),
+            whiteMask(gray, sat, 130), // 170 → 130
+            whiteMask(gray, sat, 100), // 新增更低阈值兜底
+            sobelMask(gray, W, H, 160)
+        )
+        var corners = runPipelines(masksA, W, H, paramsA)
+        if (corners != null) return scaleCorners(corners, scale)
 
-        for (mask in listOf(maskA, maskB, maskC)) {
-            val corners = calibrateWithMask(mask, W, H, allowPartial = true)
-            if (corners != null) {
-                val inv = 1f / scale
-                return corners.map { PointF(it.x * inv, it.y * inv) }
-            }
+        // 方案B：低阈值 Sobel 边缘 + 宽松聚类
+        val masksB = listOf(sobelMask(gray, W, H, 100))
+        corners = runPipelines(masksB, W, H, paramsB)
+        if (corners != null) return scaleCorners(corners, scale)
+
+        // 方案C：超低阈值边缘 + 最宽松参数（最后防线）
+        val masksC = listOf(sobelMask(gray, W, H, 60))
+        corners = runPipelines(masksC, W, H, paramsC)
+        if (corners != null) return scaleCorners(corners, scale)
+
+        return null
+    }
+
+    private fun scaleCorners(corners: List<PointF>, scale: Float): List<PointF> {
+        val inv = 1f / scale
+        return corners.map { PointF(it.x * inv, it.y * inv) }
+    }
+
+    private fun runPipelines(masks: List<BooleanArray>, W: Int, H: Int, params: Params): List<PointF>? {
+        for (mask in masks) {
+            val r = calibrateWithMask(mask, W, H, params)
+            if (r != null) return r
         }
         return null
     }
 
-    /** 白线掩码：亮度达标且低饱和 */
+    /** 白线掩码：亮度达标且低饱和（饱和度上限放宽到 90） */
     private fun whiteMask(gray: IntArray, sat: IntArray, threshold: Int): BooleanArray {
         val mask = BooleanArray(gray.size)
         for (i in gray.indices) {
@@ -86,27 +129,27 @@ object CourtAutoCalibrator {
         return mask
     }
 
-    /** Sobel 亮度边缘掩码：不依赖颜色，明显的亮度边缘都保留 */
-    private fun sobelMask(gray: IntArray, W: Int, H: Int): BooleanArray {
+    /** Sobel 亮度边缘掩码：不依赖颜色，明显的亮度边缘都保留（阈值越低越宽松） */
+    private fun sobelMask(gray: IntArray, W: Int, H: Int, edgeThresh: Int): BooleanArray {
         val mask = BooleanArray(W * H)
         for (y in 1 until H - 1) {
             val row0 = (y - 1) * W
             val row1 = y * W
             val row2 = (y + 1) * W
             for (x in 1 until W - 1) {
-                if (gray[row1 + x] < 40) continue
+                if (gray[row1 + x] < 30) continue
                 val gx = (gray[row0 + x + 1] + 2 * gray[row1 + x + 1] + gray[row2 + x + 1]) -
                     (gray[row0 + x - 1] + 2 * gray[row1 + x - 1] + gray[row2 + x - 1])
                 val gy = (gray[row2 + x - 1] + 2 * gray[row2 + x] + gray[row2 + x + 1]) -
                     (gray[row0 + x - 1] + 2 * gray[row0 + x] + gray[row0 + x + 1])
-                if (abs(gx) + abs(gy) > 160) mask[row1 + x] = true
+                if (abs(gx) + abs(gy) > edgeThresh) mask[row1 + x] = true
             }
         }
         return mask
     }
 
-    /** 在给定掩码上执行：形态学闭 -> 霍夫 -> 方向组枚举 -> 四边形评分；失败时尝试"部分线+羽毛球先验"构造 */
-    private fun calibrateWithMask(maskIn: BooleanArray, W: Int, H: Int, allowPartial: Boolean): List<PointF>? {
+    /** 在给定掩码上执行：形态学闭 -> 霍夫 -> 方向组枚举 -> 四边形评分；失败时"部分线+羽毛球先验"构造 */
+    private fun calibrateWithMask(maskIn: BooleanArray, W: Int, H: Int, params: Params): List<PointF>? {
         // ---- 形态学闭：膨胀 + 腐蚀（3x3 十字）----
         val closed = BooleanArray(W * H)
         val dil = BooleanArray(W * H)
@@ -172,8 +215,9 @@ object CourtAutoCalibrator {
         }
         if (candidates.isEmpty()) return null
 
-        // 保留高票线（>= 15% 峰值）
-        val strong = candidates.filter { it.votes >= maxVotes * 0.15 }
+        // 保留高票线：下限降到 8%，且至少保留得票数 >= 3 的线（远景 maxVotes 只有 6~10 时也能保留足够线条）
+        val keepVotes = max(3, (maxVotes * params.strongRatio).toInt())
+        val strong = candidates.filter { it.votes >= keepVotes }
 
         // ---- 角度聚类成方向组 ----
         val sorted = strong.sortedBy { it.thetaDeg }
@@ -183,7 +227,7 @@ object CourtAutoCalibrator {
         var curVotes = 0
         var curStart = sorted.first().thetaDeg
         for (l in sorted) {
-            if (curAngles.isEmpty() || angleJoin(curStart, curAngles.lastOrNull(), l.thetaDeg)) {
+            if (curAngles.isEmpty() || angleJoin(curStart, curAngles.lastOrNull(), l.thetaDeg, params.joinDeg)) {
                 curAngles.add(l.thetaDeg)
                 curRhos.add(l.rho)
                 curVotes += l.votes
@@ -232,19 +276,19 @@ object CourtAutoCalibrator {
                 if (corners == null) continue
                 val area = quadArea(corners)
                 val areaRatio = area / (W * H)
-                if (areaRatio < 0.10 || areaRatio > 0.97) continue
+                if (areaRatio < params.areaMin || areaRatio > 0.97) continue
                 val sides = edgeLengths(corners)
                 val minSide = sides.min() ?: continue
                 val maxSide = sides.max() ?: continue
-                if (maxSide / minSide > 6.0) continue
+                if (maxSide / minSide > params.sideMax) continue
                 val fit = lineFitScore(closed, W, H, corners)
                 val score = fit * (0.6 + 0.4 * areaRatio.coerceAtMost(1.0))
                 candidatesQ.add(Candidate(corners, score, area))
             }
         }
-        if (candidatesQ.isEmpty()) return partialConstruct(maskIn, W, H, groups, allowPartial)
+        if (candidatesQ.isEmpty()) return partialConstruct(maskIn, W, H, groups, params)
         val best = candidatesQ.maxBy { it.score }
-        if (best.score < 0.08) return partialConstruct(maskIn, W, H, groups, allowPartial)
+        if (best.score < params.scoreMin) return partialConstruct(maskIn, W, H, groups, params)
         return best.corners
     }
 
@@ -256,9 +300,9 @@ object CourtAutoCalibrator {
      * 构造出完整羽毛球场地覆盖在画面上——不要求四条边都可见。
      */
     private fun partialConstruct(
-        maskIn: BooleanArray, W: Int, H: Int, groups: List<DirGroup>, allowPartial: Boolean
+        maskIn: BooleanArray, W: Int, H: Int, groups: List<DirGroup>, params: Params
     ): List<PointF>? {
-        if (!allowPartial || groups.size < 2) return null
+        if (groups.size < 2) return null
         // 主组：平行线最多的一组（边线）
         val gMain = groups.maxByOrNull { it.rhos.size } ?: return null
         if (gMain.rhos.size < 2) return null
@@ -266,8 +310,8 @@ object CourtAutoCalibrator {
         val gOther = groups.filter { angleDiff(it.angleDeg, gMain.angleDeg) in 70.0..110.0 }
             .maxByOrNull { it.rhos.size } ?: return null
         if (gOther.rhos.isEmpty()) return null
-        // 副组若有 ≥2 条线，正常四边形逻辑应已成功，这里只处理"单条横线"场景
-        if (gOther.rhos.size > 1) return null
+        // 副组有几条线都可以：取"离画面中心最近"的那条作为已知横线（rho 绝对值最小者）
+        val otherRho = gOther.rhos.sortedBy { abs(it) }.first()
 
         val m = gMain.rhos.sorted()
         val r1 = quantile(m, 0.15)
@@ -276,8 +320,8 @@ object CourtAutoCalibrator {
         val thetaM = gMain.angleDeg * PI / 180.0
         val thetaO = gOther.angleDeg * PI / 180.0
 
-        val p1 = intersect(r1, thetaM, gOther.rhos[0], thetaO) ?: return null
-        val p2 = intersect(r2, thetaM, gOther.rhos[0], thetaO) ?: return null
+        val p1 = intersect(r1, thetaM, otherRho, thetaO) ?: return null
+        val p2 = intersect(r2, thetaM, otherRho, thetaO) ?: return null
 
         // 纵深方向 = 主组线走向；选"远离画面中心"的方向（场地朝画面边缘延伸）
         val dx = cos(thetaM + PI / 2)
@@ -302,11 +346,11 @@ object CourtAutoCalibrator {
         val quad = listOf(p1, p2, p2n, p1n)
         val corners = orderCorners(quad) ?: return null
         val area = quadArea(corners)
-        if (area / (W * H) < 0.06) return null
+        if (area / (W * H) < params.areaMin * 0.75) return null
 
-        // 贴合度验证：4 条边至少 2 条有真实白线支撑（可见边），避免墙面/座椅噪声线构造出假场地
+        // 贴合度验证：至少 params.partialFitCount 条边有真实线支撑（可见边），防止墙面/座椅噪声线伪造场地
         val fits = edgeFitScores(maskIn, W, H, corners)
-        if (fits.count { it > 0.15 } < 2) return null
+        if (fits.count { it > params.partialFitMin } < params.partialFitCount) return null
         return corners
     }
 
@@ -351,11 +395,11 @@ object CourtAutoCalibrator {
         return d
     }
 
-    /** 角度环形分组：检查新角度能否并入当前组（组内跨度 <= 12°） */
-    private fun angleJoin(start: Double, last: Double?, next: Double): Boolean {
+    /** 角度环形分组：检查新角度能否并入当前组（组内跨度 <= joinDeg） */
+    private fun angleJoin(start: Double, last: Double?, next: Double, joinDeg: Double): Boolean {
         if (last == null) return true
         val span = if (abs(next - start) <= 90) abs(next - start) else 180 - abs(next - start)
-        return span <= 12.0
+        return span <= joinDeg
     }
 
     private fun avgAngle(angles: List<Double>): Double {
@@ -400,8 +444,6 @@ object CourtAutoCalibrator {
             }
         }
         if (sign == 0) return null
-        val cx = pts.sumOf { it.x.toDouble() } / n
-        val cy = pts.sumOf { it.y.toDouble() } / n
         val sortedByY = pts.sortedBy { it.y }
         val topRow = sortedByY.take(2).sortedBy { it.x }
         val bottomRow = sortedByY.drop(2).sortedBy { it.x }

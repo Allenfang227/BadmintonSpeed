@@ -148,11 +148,8 @@ class VideoAnalyzer {
         // ================= 阶段 3：场地基准检测（8-28%，黄线框贴合场地线） =================
         onStage(StageUpdate(AnalysisPhase.COURT, 0, 10f, 9f))
         // 尝试多帧：首帧可能模糊/被遮挡，用首帧、1/3处、2/3处帧依次检测，任一成功即可
-        val probeIndexes = listOf(
-            0,
-            (framesAll.size / 3).coerceAtLeast(1),
-            (framesAll.size * 2 / 3).coerceAtLeast(1)
-        ).distinct()
+        // 均匀取 8 帧探测（原来只有 3 帧，容易被遮挡/模糊帧连累，导致 E101）
+        val probeIndexes = (0 until 8).map { framesAll.size * it / 7 }.distinct()
         var courtCornersPx: List<PointF>? = null
         var anchorFrame = framesAll.first().bitmap
         for (pi in probeIndexes) {
@@ -325,7 +322,7 @@ class VideoAnalyzer {
             hits = hits,
             summary = summary,
             analysisDurationMs = System.currentTimeMillis() - startTime,
-            appVersion = "2.6.0",
+            appVersion = "2.7.0",
             frameWidth = w,
             frameHeight = h,
             frameAtMaxSpeed = frameAtMax
