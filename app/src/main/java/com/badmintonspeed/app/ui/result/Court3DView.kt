@@ -15,8 +15,10 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import com.badmintonspeed.app.analysis.Homography
 import com.badmintonspeed.app.domain.AnalysisResult
 import com.badmintonspeed.app.domain.HitAnalysis
+import com.badmintonspeed.app.domain.PoseFrameData
 import com.badmintonspeed.app.ui.theme.Primary
 import com.badmintonspeed.app.ui.theme.TrailYellow
 import kotlin.math.PI
@@ -38,6 +40,7 @@ fun Court3DView(
     hitIndex: Int,
     hitCount: Int,
     progressMs: Long,
+    poseFrames: List<PoseFrameData> = emptyList(),
     modifier: Modifier
 ) {
     var yaw by remember { mutableStateOf(0f) }
@@ -111,6 +114,37 @@ fun Court3DView(
         drawLine(Primary, project(0f, netY, 0f), netP1, 4f)
         drawLine(Primary, project(W, netY, 0f), netP2, 4f)
 
+        // ---- v2.12 空间立体：当前进度附近的运动员也映射进 3D 场地（脚部→场地坐标，竖线表示站姿） ----
+        if (poseFrames.isNotEmpty() && result.court != null) {
+            val tNow = progressMs / 1000.0
+            val snap = poseFrames.lastOrNull { it.timeSec <= tNow + 0.03 }
+            if (snap != null) {
+                val h = result.court.homography
+                for (skel in snap.skeletons) {
+                    // 脚部点：优先脚跟(29/30)，其次脚踝(27/28)，再退化为关键点中 y 最大（最下）的点
+                    val footIdx = when {
+                        (skel.points.getOrNull(29)?.visibility ?: 0f) > 0.3f -> 29
+                        (skel.points.getOrNull(30)?.visibility ?: 0f) > 0.3f -> 30
+                        (skel.points.getOrNull(27)?.visibility ?: 0f) > 0.3f -> 27
+                        (skel.points.getOrNull(28)?.visibility ?: 0f) > 0.3f -> 28
+                        else -> (skel.points.indices.maxByOrNull { skel.points[it].visibility } ?: 0)
+                    }
+                    val headIdx = if ((skel.points.getOrNull(0)?.visibility ?: 0f) > 0.3f) 0
+                                  else (skel.points.indices.minByOrNull { skel.points[it].y } ?: 0)
+                    val foot = skel.points.getOrNull(footIdx) ?: continue
+                    val head = skel.points.getOrNull(headIdx) ?: continue
+                    if (foot.visibility <= 0.1f) continue
+                    val c = Homography.pixelToCourt(h, foot.x, foot.y)
+                    // 球员 z=0 地面 + 身高约1.6m 头部（把像素高度映射进 3D 空间）
+                    val headH = (head.y - foot.y).coerceIn(0f, 400f) / 400f * 1.6f
+                    val p1 = project(c.x, c.y, 0f)
+                    val p2 = project(c.x, c.y, headH.coerceAtLeast(0.5f))
+                    drawLine(Color(0xFF22D3EE).copy(alpha = 0.9f), p1, p2, 3f)
+                    drawCircle(Color(0xFF67E8F9), radius = 4f, center = p2)
+                }
+            }
+        }
+
         // ---- 当前选中球的轨迹（从击球点→落点） ----
         currentHit?.let { hit ->
             val traj = hit.trajectory
@@ -122,13 +156,11 @@ fun Court3DView(
                 for (i in 1 until traj.size) {
                     val a = traj[i - 1]
                     val b = traj[i]
-                    // 抛物线高度：轨迹中点最高
-                    val za = 1.8f * sin(PI.toFloat() * ((a.timeSec - t0) / span).toFloat().coerceIn(0f, 1f))
-                    val zb = 1.8f * sin(PI.toFloat() * ((b.timeSec - t0) / span).toFloat().coerceIn(0f, 1f))
+                    // v2.12 景深：直接使用轨迹填充的真实高度 zMeters（抛物线模型，击球→最高→落地）
                     drawLine(
                         color = Color(0xFFFFD60A).copy(alpha = 0.85f),
-                        start = project(a.courtX, a.courtY, za),
-                        end = project(b.courtX, b.courtY, zb),
+                        start = project(a.courtX, a.courtY, a.zMeters),
+                        end = project(b.courtX, b.courtY, b.zMeters),
                         strokeWidth = 3f,
                         cap = StrokeCap.Round
                     )
@@ -137,9 +169,7 @@ fun Court3DView(
                 val tNow = progressMs / 1000.0
                 val visible = traj.filter { it.timeSec <= tNow + 0.03 }
                 visible.lastOrNull()?.let { cur ->
-                    val frac = ((cur.timeSec - t0) / span).toFloat().coerceIn(0f, 1f)
-                    val hz = 1.8f * sin(PI * frac).toFloat()
-                    val p = project(cur.courtX, cur.courtY, hz)
+                    val p = project(cur.courtX, cur.courtY, cur.zMeters)
                     drawCircle(Color(0x33FFD60A), radius = 16f, center = p)
                     drawCircle(Color(0x66FFD60A), radius = 9f, center = p)
                     drawCircle(TrailYellow, radius = 5f, center = p)
@@ -149,7 +179,7 @@ fun Court3DView(
             // ---- 落点 IN/OUT 大标记 ----
             val land = traj.lastOrNull()
             if (land != null) {
-                val inCourt = land.courtX in 0f..6.10f && land.courtY in 0f..13.40f
+                val inCourt = land.groundX in 0f..6.10f && land.groundY in 0f..13.40f
                 val landColor = if (inCourt) Color(0xFF4ADE80) else Color(0xFFEF4444)
                 val lp = project(land.courtX, land.courtY, 0f)
                 drawCircle(landColor, radius = 10f, center = lp, style = Stroke(width = 3.5f))

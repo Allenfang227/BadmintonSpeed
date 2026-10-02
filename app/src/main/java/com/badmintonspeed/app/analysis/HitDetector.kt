@@ -82,8 +82,20 @@ class HitDetector(
                 val sp = points[k].speedKmh ?: 0f
                 if (sp < maxSpeed * 0.55f) { landIdx = k; break }
             }
-            val traj = points.subList(maxOf(0, i - 2), landIdx + 1)
-            if (traj.size < 3) continue
+            val trajRaw = points.subList(maxOf(0, i - 2), landIdx + 1)
+            if (trajRaw.size < 3) continue
+            // v2.12 景深：给轨迹填充高度 z（物理抛物线模型：起飞→最高点约1.6m→落地）和地面投影
+            val t0 = trajRaw.first().timeSec
+            val t1 = trajRaw.last().timeSec
+            val spanT = (t1 - t0).coerceAtLeast(0.001)
+            val traj = trajRaw.map { tp ->
+                val frac = ((tp.timeSec - t0) / spanT).toFloat().coerceIn(0f, 1f)
+                tp.copy(
+                    zMeters = 1.6f * kotlin.math.sin(kotlin.math.PI * frac).toFloat(),
+                    groundX = tp.courtX,
+                    groundY = tp.courtY
+                )
+            }
 
             // 1) 方向单调性：courtY 方向反转计数（打转剔除）
             var reversals = 0

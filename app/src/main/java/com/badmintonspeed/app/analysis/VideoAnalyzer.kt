@@ -11,7 +11,9 @@ import com.badmintonspeed.app.domain.AnalysisError
 import com.badmintonspeed.app.domain.AnalysisPhase
 import com.badmintonspeed.app.domain.AnalysisResult
 import com.badmintonspeed.app.domain.AnalysisSummary
+import com.badmintonspeed.app.analysis.PoseDetector
 import com.badmintonspeed.app.domain.BallPoint
+import com.badmintonspeed.app.domain.PoseFrameData
 import com.badmintonspeed.app.domain.CourtDimensions
 import com.badmintonspeed.app.domain.CourtResult
 import com.badmintonspeed.app.domain.HitType
@@ -79,6 +81,18 @@ class VideoAnalyzer {
         color = Color.rgb(255, 214, 10)
         textSize = 22f
     }
+    // v2.12 骨骼识别画笔（MediaPipe 姿态，青绿色骨架）
+    private val poseBonePaint = Paint().apply {
+        color = Color.rgb(34, 211, 238)  // 青绿：与黄色球框区分
+        style = Paint.Style.STROKE
+        strokeWidth = 3f
+        isAntiAlias = true
+    }
+    private val poseJointPaint = Paint().apply {
+        color = Color.rgb(34, 211, 238)
+        style = Paint.Style.FILL
+        isAntiAlias = true
+    }
 
     /**
      * @param context        加载 assets 中的 ONNX 模型
@@ -93,7 +107,8 @@ class VideoAnalyzer {
         analysisFps: Int,
         onStage: (StageUpdate) -> Unit,
         onPreviewFrame: (Bitmap) -> Unit,
-        manualCourtCorners: List<PointF>? = null
+        manualCourtCorners: List<PointF>? = null,
+        onCourt: (CourtResult) -> Unit = {}
     ): AnalysisResult = withContext(Dispatchers.Default) {
         val startTime = System.currentTimeMillis()
 
@@ -223,6 +238,7 @@ class VideoAnalyzer {
         }
         val homography = Homography.compute(courtCornersPx, StandardCourt.corners)
         val court = CourtResult(courtCornersPx, homography)
+        onCourt(court) // v2.12：分析中实时暴露场地，UI 层常驻叠加黄线（不再闪一下消失）
         // 用 CourtMapper 透视变换画出完整标准场地线（融合自 AI-YuJian-AI：不只是4条外边，还包括中线/发球线/球网等）
         val courtPreview = anchorFrame.copy(Bitmap.Config.ARGB_8888, true)
         val cv = Canvas(courtPreview)
@@ -259,10 +275,19 @@ class VideoAnalyzer {
         var yoloHits = 0
         // 背景差分检测器（用户要求："固定背景，识别移动的白色点，多帧差分确保羽毛球"）：
         // 远景斜拍时球很小很糊，YOLO 经常漏检，用背景差分做第二通道补充
-        val bgDetector = BackgroundShuttleDetector()
+        val bgDetector = BackgroundShuttleDetector(
+            bgFrames = 12,          // 多学几帧背景，球还没动时建干净背景
+            diffThreshold = 24,    // 与背景亮度差
+            whiteThreshold = 100,  // 白色阈值降低：远景球较暗也能检出（v2.12 提灵敏度）
+            cellSize = 16,          // 聚类格子缩小：球很小也能成簇
+            minCellHits = 3,
+            maxBlobCells = 10,
+            minMovePx = 4f,         // 帧间最小移动：小球帧间位移小也认
+            maxFrameJump = 70f
+        )
         // 前 bgFrames 帧学背景（视频开头通常为空场地/球还没动）
         for ((i, frame) in framesAll.withIndex()) {
-            if (i < 8) bgDetector.learn(frame.bitmap)
+            if (i < 12) bgDetector.learn(frame.bitmap)
         }
 
         for ((i, frame) in framesAll.withIndex()) {
@@ -363,6 +388,45 @@ class VideoAnalyzer {
             }
             onPreviewFrame(bmp)
         }
+        // 阶段5b：骨骼识别（v2.12 用户要求：加骨骼识别运动员击球动作 + 随视频播放动态显示）
+        // 使用 MediaPipe PoseLandmarker 官方 AI 模型（assets/models/pose_landmarker.task，多人 33 关键点）
+        onStage(StageUpdate(AnalysisPhase.PLAYER, 2, 10f, 80f))
+        val poseFrames = ArrayList<PoseFrameData>()
+        val poseDetector = try { PoseDetector(context) } catch (e: Exception) { null }
+        if (poseDetector != null) {
+            for ((i, f) in framesAll.withIndex()) {
+                if (i % 6 == 0) {
+                    val skels = poseDetector.detect(f.bitmap)
+                    if (skels.isNotEmpty()) {
+                        poseFrames.add(PoseFrameData(f.timeMs / 1000.0, f.index, skels))
+                    }
+                }
+                if (i % 20 == 0) {
+                    val pct = 10f + 80f * (i.toFloat() / framesAll.size)
+                    onStage(StageUpdate(AnalysisPhase.PLAYER, 2, pct, 78f + 10f * pct / 100f))
+                }
+                yield()
+            }
+            // 预览帧：叠加最后检测到的骨骼骨架（青绿色，随帧动态）
+            if (poseFrames.isNotEmpty()) {
+                val bmp = framesAll.last().bitmap.copy(Bitmap.Config.ARGB_8888, true)
+                val pcv = Canvas(bmp)
+                for (skel in poseFrames.last().skeletons) {
+                    for (conn in PoseDetector.CONNECTIONS) {
+                        val a = skel.points.getOrNull(conn[0]) ?: continue
+                        val b = skel.points.getOrNull(conn[1]) ?: continue
+                        if (a.visibility > 0.3f && b.visibility > 0.3f) {
+                            pcv.drawLine(a.x, a.y, b.x, b.y, poseBonePaint)
+                        }
+                    }
+                    for (pt in skel.points) {
+                        if (pt.visibility > 0.3f) pcv.drawCircle(pt.x, pt.y, 4f, poseJointPaint)
+                    }
+                }
+                onPreviewFrame(bmp)
+            }
+            poseDetector.close()
+        }
         onStage(StageUpdate(AnalysisPhase.PLAYER, 3, 100f, 88f, done = true))
         delay(200)
 
@@ -405,10 +469,11 @@ class VideoAnalyzer {
             hits = hits,
             summary = summary,
             analysisDurationMs = System.currentTimeMillis() - startTime,
-            appVersion = "2.11.0",
+            appVersion = "2.12.0",
             frameWidth = w,
             frameHeight = h,
-            frameAtMaxSpeed = frameAtMax
+            frameAtMaxSpeed = frameAtMax,
+            poseFrames = poseFrames
         )
     }
 

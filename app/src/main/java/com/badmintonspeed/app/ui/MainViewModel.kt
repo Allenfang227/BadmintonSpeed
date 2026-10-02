@@ -12,6 +12,7 @@ import com.badmintonspeed.app.data.HistoryRepository
 import com.badmintonspeed.app.data.ResultJson
 import com.badmintonspeed.app.data.SettingsRepository
 import com.badmintonspeed.app.domain.AnalysisError
+import com.badmintonspeed.app.domain.CourtResult
 import com.badmintonspeed.app.domain.AnalysisRecord
 import com.badmintonspeed.app.domain.AnalysisResult
 import com.badmintonspeed.app.domain.PerformanceMode
@@ -64,6 +65,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     // 分析中的实时预览帧（带检测框）
     private val _previewFrame = MutableStateFlow<Bitmap?>(null)
     val previewFrame: StateFlow<Bitmap?> = _previewFrame
+    // v2.12：场地标定结果常驻（分析中实时更新，UI 层黄线一直叠加不闪）
+    private val _courtResult = MutableStateFlow<CourtResult?>(null)
+    val courtResult: StateFlow<CourtResult?> = _courtResult
 
     // 结果与错误（错误带错误码，对应不同失败原因）
     private val _result = MutableStateFlow<AnalysisResult?>(null)
@@ -126,6 +130,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         cancelFlag.set(false)
         _stage.value = null
         _previewFrame.value = null
+        _courtResult.value = null
         _analysisStartMs.value = System.currentTimeMillis()
         _screen.value = Screen.Analyzing
 
@@ -141,7 +146,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         // 不主动 recycle：Compose 可能仍引用旧帧，交给 GC 回收
                         _previewFrame.value = bmp
                     },
-                    manualCourtCorners = manualCourtCorners
+                    manualCourtCorners = manualCourtCorners,
+                    onCourt = { c -> _courtResult.value = c }
                 )
                 _result.value = result
 

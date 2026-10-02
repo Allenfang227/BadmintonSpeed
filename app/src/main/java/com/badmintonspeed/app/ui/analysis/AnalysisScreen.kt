@@ -39,6 +39,7 @@ import androidx.compose.ui.unit.sp
 import com.badmintonspeed.app.domain.AnalysisPhase
 import com.badmintonspeed.app.domain.StageUpdate
 import com.badmintonspeed.app.ui.MainViewModel
+import com.badmintonspeed.app.ui.components.CourtOverlay
 import com.badmintonspeed.app.ui.theme.Background
 import com.badmintonspeed.app.ui.theme.Error
 import com.badmintonspeed.app.ui.theme.OnBackground
@@ -57,6 +58,7 @@ import kotlinx.coroutines.delay
 fun AnalysisScreen(vm: MainViewModel) {
     val stage by vm.stage.collectAsState()
     val preview by vm.previewFrame.collectAsState()
+    val court by vm.courtResult.collectAsState()
     val startMs by vm.analysisStartMs.collectAsState()
 
     // 每 1 秒刷新一次剩余时长估算
@@ -101,6 +103,13 @@ fun AnalysisScreen(vm: MainViewModel) {
                         contentScale = ContentScale.Fit
                     )
                 } ?: Box(Modifier.fillMaxSize())
+                // v2.12：场地黄线常驻叠加（标定完成后一直显示，不闪）
+                CourtOverlay(
+                    court = court,
+                    frameW = preview?.width ?: 1280,
+                    frameH = preview?.height ?: 720,
+                    modifier = Modifier.fillMaxSize()
+                )
                 // 倍速按钮（可点击切换，图2/图3 左下角 1.0x）
                 val speeds = listOf("0.5x", "1.0x", "1.5x", "2.0x")
                 var speedIdx by remember { mutableStateOf(1) }

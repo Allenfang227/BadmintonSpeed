@@ -17,10 +17,11 @@ import kotlin.math.sqrt
  * 单类别 "Shuttlecock"，输出格式 cx,cy,w,h,conf（coco 格式）。
  * 检测流程：letterbox 缩放 -> 归一化 -> 推理 -> 阈值过滤 -> NMS -> 映射回原图像素坐标。
  * 结果以 BallDetector.Blob 结构输出，兼容 BallTracker 跟踪器。
+ * v2.12: conf 0.15->0.08 降阈提高检出（远景小球置信度低，ShuttleTracker 帧间过滤兜底）。
  */
 class ShuttleOnnxDetector(
     context: Context,
-    private val confThreshold: Float = 0.15f,
+    private val confThreshold: Float = 0.08f,
     private val iouThreshold: Float = 0.45f
 ) {
 

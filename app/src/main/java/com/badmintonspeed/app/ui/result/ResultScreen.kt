@@ -57,6 +57,8 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.badmintonspeed.app.domain.AnalysisResult
 import com.badmintonspeed.app.ui.MainViewModel
+import com.badmintonspeed.app.ui.components.CourtOverlay
+import com.badmintonspeed.app.ui.components.PoseOverlay
 import com.badmintonspeed.app.ui.theme.OnSurfaceVariant
 import com.badmintonspeed.app.ui.theme.Primary
 import com.badmintonspeed.app.ui.theme.Surface
@@ -186,6 +188,23 @@ fun ResultScreen(vm: MainViewModel) {
                 modifier = Modifier.fillMaxSize()
             )
 
+            // v2.12：场地黄线常驻叠加（一直悬在视频上，不闪）
+            CourtOverlay(
+                court = result.court,
+                frameW = result.frameWidth,
+                frameH = result.frameHeight,
+                modifier = Modifier.fillMaxSize()
+            )
+
+            // v2.12：骨骼识别动态叠加（随视频播放一直显示运动员骨架）
+            PoseOverlay(
+                poseFrames = result.poseFrames,
+                progressMs = progressMs,
+                frameW = result.frameWidth,
+                frameH = result.frameHeight,
+                modifier = Modifier.fillMaxSize()
+            )
+
             // 黄色流光轨迹叠加
             if (showTrail) {
                 TrajectoryOverlay(result, progressMs, Modifier.fillMaxSize())
@@ -250,6 +269,7 @@ fun ResultScreen(vm: MainViewModel) {
                     hitIndex = currentHitIndex.coerceAtLeast(0),
                     hitCount = hits.size,
                     progressMs = progressMs,
+                    poseFrames = result.poseFrames,
                     modifier = Modifier.fillMaxSize().padding(8.dp)
                 )
             }

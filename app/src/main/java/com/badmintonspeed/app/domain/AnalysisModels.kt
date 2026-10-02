@@ -43,7 +43,10 @@ data class BallPoint(
     val courtX: Float,
     val courtY: Float,
     val speedKmh: Float? = null,
-    val isSmash: Boolean = false
+    val isSmash: Boolean = false,
+    val zMeters: Float = 0f,   // 景深高度（v2.12：球离地高度，空间立体识别）
+    val groundX: Float = 0f,   // 球在地面的投影（court 坐标 x，落点判定用）
+    val groundY: Float = 0f    // 球在地面的投影（court 坐标 y，落点判定用）
 )
 
 /** 单次击球分析 */
@@ -68,6 +71,13 @@ data class AnalysisSummary(
 )
 
 /** 一次完整分析的结果 */
+/** 某一时刻的多人骨骼快照（结果页随播放进度动态叠加） */
+data class PoseFrameData(
+    val timeSec: Double,
+    val frame: Int,
+    val skeletons: List<com.badmintonspeed.app.analysis.PoseSkeleton>
+)
+
 data class AnalysisResult(
     val videoInfo: VideoInfo,
     val court: CourtResult?,
@@ -78,7 +88,8 @@ data class AnalysisResult(
     val appVersion: String,
     val frameWidth: Int,
     val frameHeight: Int,
-    val frameAtMaxSpeed: Int
+    val frameAtMaxSpeed: Int,
+    val poseFrames: List<PoseFrameData> = emptyList()
 )
 
 /** 持久化的历史记录 */
