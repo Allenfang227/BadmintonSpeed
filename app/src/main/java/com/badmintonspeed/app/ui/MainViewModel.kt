@@ -2,6 +2,7 @@ package com.badmintonspeed.app.ui
 
 import android.app.Application
 import android.graphics.Bitmap
+import android.graphics.PointF
 import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.lifecycle.AndroidViewModel
@@ -70,6 +71,11 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _error = MutableStateFlow<AnalysisError?>(null)
     val error: StateFlow<AnalysisError?> = _error
 
+    // 手动标定：ABC自动检测全失败后，携带第一帧供用户点4个角点（融合自 AI-YuJian-AI）
+    private val _calibrationFrame = MutableStateFlow<Bitmap?>(null)
+    val calibrationFrame: StateFlow<Bitmap?> = _calibrationFrame
+    private var pendingManualCorners: List<PointF>? = null
+
     // 历史
     private val _records = MutableStateFlow<List<AnalysisRecord>>(emptyList())
     val records: StateFlow<List<AnalysisRecord>> = _records
@@ -111,8 +117,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** 启动分析（AI 自动标定场地 + YOLO11 真实检测，分模块实时进度） */
-    fun startAnalysis() {
+    /** 启动分析（AI 自动标定场地 + YOLO11 真实检测，分模块实时进度）；manualCourtCorners 非空时跳过自动检测直接用手动角点 */
+    fun startAnalysis(manualCourtCorners: List<PointF>? = null) {
         val file = _videoFile.value ?: run {
             _error.value = AnalysisError("E000", "提示", "请先选择视频", "需要选择视频后开始测速")
             return
@@ -134,7 +140,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     onPreviewFrame = { bmp ->
                         // 不主动 recycle：Compose 可能仍引用旧帧，交给 GC 回收
                         _previewFrame.value = bmp
-                    }
+                    },
+                    manualCourtCorners = manualCourtCorners
                 )
                 _result.value = result
 
@@ -154,6 +161,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 _screen.value = Screen.Result
             } catch (ce: CancellationException) {
                 throw ce
+            } catch (e: VideoAnalyzer.ManualCalibrationRequired) {
+                if (!cancelFlag.get()) {
+                    // ABC自动检测全失败 → 进入手动标定界面（不报错，融合自 AI-YuJian-AI 人工标定）
+                    _calibrationFrame.value = e.firstFrame
+                    _screen.value = Screen.Calibrate
+                }
             } catch (e: VideoAnalyzer.AnalysisException) {
                 if (!cancelFlag.get()) {
                     _error.value = e.error
@@ -177,6 +190,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         cancelFlag.set(true)
         analyzeJob?.cancel()
         _previewFrame.value = null
+        _screen.value = Screen.Home
+    }
+
+    /** 用户手动标定完4个角点后，用这些角点继续分析（跳过自动场地检测） */
+    fun submitManualCourtCorners(corners: List<PointF>) {
+        _calibrationFrame.value = null
+        _screen.value = Screen.Analyzing
+        startAnalysis(manualCourtCorners = corners)
+    }
+
+    fun cancelCalibration() {
+        _calibrationFrame.value = null
         _screen.value = Screen.Home
     }
 

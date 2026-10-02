@@ -50,6 +50,12 @@ class VideoAnalyzer {
 
     class AnalysisException(val error: AnalysisError) : Exception(error.display)
 
+    /**
+     * ABC 三套自动场地检测全部失败时抛出，携带视频第一帧供用户手动标定4个角点。
+     * 这不是错误，而是"需要用户介入"的信号——融合自 AI-YuJian-AI 的人工标定思路。
+     */
+    class ManualCalibrationRequired(val firstFrame: Bitmap) : Exception("Manual court calibration required")
+
     private val courtPaint = Paint().apply {
         color = Color.rgb(250, 204, 21) // 黄色：贴合场地线，对应参考图
         style = Paint.Style.STROKE
@@ -86,7 +92,8 @@ class VideoAnalyzer {
         videoFile: File,
         analysisFps: Int,
         onStage: (StageUpdate) -> Unit,
-        onPreviewFrame: (Bitmap) -> Unit
+        onPreviewFrame: (Bitmap) -> Unit,
+        manualCourtCorners: List<PointF>? = null
     ): AnalysisResult = withContext(Dispatchers.Default) {
         val startTime = System.currentTimeMillis()
 
@@ -152,45 +159,59 @@ class VideoAnalyzer {
         val probeIndexes = (0 until 8).map { framesAll.size * it / 7 }.distinct()
         var courtCornersPx: List<PointF>? = null
         var anchorFrame = framesAll.first().bitmap
-        for (pi in probeIndexes) {
-            val probe = framesAll[pi.coerceIn(0, framesAll.size - 1)].bitmap
-            onPreviewFrame(probe.copy(Bitmap.Config.ARGB_8888, true))
-            delay(150)
-            onStage(StageUpdate(AnalysisPhase.COURT, 0, 30f + 20f * (probeIndexes.indexOf(pi) + 1) / probeIndexes.size, 11f + 6f * (probeIndexes.indexOf(pi) + 1) / probeIndexes.size))
-            val r = CourtAutoCalibrator.calibrate(probe)
-            if (r != null) {
-                courtCornersPx = r
-                anchorFrame = probe
-                break
+
+        if (manualCourtCorners != null) {
+            // 用户手动标定的角点（融合自 AI-YuJian-AI：人工点4角 + 透视变换补全）
+            courtCornersPx = manualCourtCorners
+            onStage(StageUpdate(AnalysisPhase.COURT, 0, 50f, 12f))
+            delay(100)
+            onStage(StageUpdate(AnalysisPhase.COURT, 1, 80f, 20f))
+            delay(100)
+        } else {
+            // ABC 三套自动检测级联
+            for (pi in probeIndexes) {
+                val probe = framesAll[pi.coerceIn(0, framesAll.size - 1)].bitmap
+                onPreviewFrame(probe.copy(Bitmap.Config.ARGB_8888, true))
+                delay(150)
+                onStage(StageUpdate(AnalysisPhase.COURT, 0, 30f + 20f * (probeIndexes.indexOf(pi) + 1) / probeIndexes.size, 11f + 6f * (probeIndexes.indexOf(pi) + 1) / probeIndexes.size))
+                val r = try {
+                    CourtAutoCalibrator.calibrate(probe)
+                } catch (e: Exception) {
+                    null // 防闪退：单帧检测异常不中断整体流程
+                }
+                if (r != null) {
+                    courtCornersPx = r
+                    anchorFrame = probe
+                    break
+                }
             }
+            onStage(StageUpdate(AnalysisPhase.COURT, 1, 60f, 17f))
+            delay(150)
+            onStage(StageUpdate(AnalysisPhase.COURT, 2, 80f, 21f))
+            delay(150)
         }
-        onStage(StageUpdate(AnalysisPhase.COURT, 1, 60f, 17f))
-        delay(150)
-        onStage(StageUpdate(AnalysisPhase.COURT, 2, 80f, 21f))
-        delay(150)
 
         if (courtCornersPx == null) {
-            throw AnalysisException(
-                AnalysisError(
-                    code = "E101",
-                    title = "场地检测失败",
-                    detail = "未能在画面中找到足够的场地线，请确保场地线清晰可见（蓝色/绿色地胶+白色边线）且完整出现在画面内。建议：①手机横着拍、让整个场地都在画面里；②离场地远一点拍全整个半场；③光线要充足。",
-                    threshold = "自适应白线/Sobel边缘 + 霍夫直线 ≥ 2 组×2 条，场地面积 ≥ 画面 10%"
-                )
-            )
+            // ABC 三套自动检测全部失败 → 请求用户手动标定（不直接报错，融合自 AI-YuJian-AI）
+            throw ManualCalibrationRequired(framesAll.first().bitmap.copy(Bitmap.Config.ARGB_8888, true))
         }
         onStage(StageUpdate(AnalysisPhase.COURT, 3, 92f, 25f))
         val homography = Homography.compute(courtCornersPx, StandardCourt.corners)
         val court = CourtResult(courtCornersPx, homography)
-        // 把识别出的黄色场地线框标注到预览帧
+        // 用 CourtMapper 透视变换画出完整标准场地线（融合自 AI-YuJian-AI：不只是4条外边，还包括中线/发球线/球网等）
         val courtPreview = anchorFrame.copy(Bitmap.Config.ARGB_8888, true)
         val cv = Canvas(courtPreview)
-        val cp = courtCornersPx
-        cv.drawLine(cp[0].x, cp[0].y, cp[1].x, cp[1].y, courtPaint)
-        cv.drawLine(cp[1].x, cp[1].y, cp[2].x, cp[2].y, courtPaint)
-        cv.drawLine(cp[2].x, cp[2].y, cp[3].x, cp[3].y, courtPaint)
-        cv.drawLine(cp[3].x, cp[3].y, cp[0].x, cp[0].y, courtPaint)
-        for (p in cp) cv.drawCircle(p.x, p.y, 7f, cornerPaint)
+        try {
+            CourtMapper(courtCornersPx).drawFullCourt(cv, courtPaint)
+        } catch (e: Exception) {
+            // 透视变换异常时回退到只画4条外边
+            val cp = courtCornersPx
+            cv.drawLine(cp[0].x, cp[0].y, cp[1].x, cp[1].y, courtPaint)
+            cv.drawLine(cp[1].x, cp[1].y, cp[2].x, cp[2].y, courtPaint)
+            cv.drawLine(cp[2].x, cp[2].y, cp[3].x, cp[3].y, courtPaint)
+            cv.drawLine(cp[3].x, cp[3].y, cp[0].x, cp[0].y, courtPaint)
+            for (pt in cp) cv.drawCircle(pt.x, pt.y, 7f, cornerPaint)
+        }
         onPreviewFrame(courtPreview)
         onStage(StageUpdate(AnalysisPhase.COURT, 3, 100f, 28f, done = true))
         delay(250)
@@ -198,27 +219,38 @@ class VideoAnalyzer {
         // ================= 阶段 4：羽毛球检测（28-78%，YOLO11 ONNX 真实检测） =================
         onStage(StageUpdate(AnalysisPhase.SHUTTLE, 0, 5f, 30f))
         val detector = ShuttleOnnxDetector(context)
-        val tracker = BallTracker()
+        // 融合自 AI-YuJian-AI ShuttlecockTracker：帧间跳跃门限+速度预测+丢帧容忍+检测框面积/宽高比过滤+ROI限制
+        val shuttleTracker = ShuttleTracker(
+            maxJumpPixels = 220f,
+            predictionGatePixels = 260f,
+            maxMissingFrames = 5,
+            maxBoxAreaRatio = 0.004f,
+            maxAspectRatio = 4.0f
+        )
         val rawPoints = ArrayList<BallPoint>()
         var lastBall: Pair<Float, Float>? = null
         var detectedFrames = 0
 
         for ((i, frame) in framesAll.withIndex()) {
             yield()
-            val boxes = detector.detect(frame.bitmap, lastBall)
-            val blobs = detector.toBlobs(boxes)
+            val boxes = try {
+                detector.detect(frame.bitmap, lastBall)
+            } catch (e: Exception) {
+                emptyList() // 防闪退：单帧推理异常不中断
+            }
             val timeSec = frame.timeMs / 1000.0
-            val pos = tracker.update(blobs, frame.index, timeSec, w, h)
+            // ShuttleTracker 做帧间跟踪过滤（面积/宽高比/跳跃/预测/丢帧/ROI），输出稳定球心
+            val pos = shuttleTracker.update(boxes, w, h, courtCornersPx)
             if (pos != null) {
                 detectedFrames++
-                lastBall = pos
-                val courtPos = Homography.pixelToCourt(homography, pos.first, pos.second)
+                lastBall = pos.x to pos.y
+                val courtPos = Homography.pixelToCourt(homography, pos.x, pos.y)
                 rawPoints.add(
                     BallPoint(
                         frame = frame.index,
                         timeSec = timeSec,
-                        x = pos.first,
-                        y = pos.second,
+                        x = pos.x,
+                        y = pos.y,
                         confidence = boxes.firstOrNull()?.conf ?: 0.5f,
                         courtX = courtPos.x,
                         courtY = courtPos.y
@@ -322,7 +354,7 @@ class VideoAnalyzer {
             hits = hits,
             summary = summary,
             analysisDurationMs = System.currentTimeMillis() - startTime,
-            appVersion = "2.7.0",
+            appVersion = "2.8.0",
             frameWidth = w,
             frameHeight = h,
             frameAtMaxSpeed = frameAtMax
