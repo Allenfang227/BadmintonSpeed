@@ -177,8 +177,8 @@ class VideoAnalyzer {
                 AnalysisError(
                     code = "E101",
                     title = "场地检测失败",
-                    detail = "未能在画面中找到足够的白色场地线，请确保场地线清晰可见（蓝色/绿色地胶+白色边线），且完整出现在画面内。",
-                    threshold = "Canny边缘 + 霍夫直线 ≥ 2 组×2 条，场地面积 ≥ 画面 18%"
+                    detail = "未能在画面中找到足够的场地线，请确保场地线清晰可见（蓝色/绿色地胶+白色边线）且完整出现在画面内。建议：①手机横着拍、让整个场地都在画面里；②离场地远一点拍全整个半场；③光线要充足。",
+                    threshold = "自适应白线/Sobel边缘 + 霍夫直线 ≥ 2 组×2 条，场地面积 ≥ 画面 10%"
                 )
             )
         }
@@ -325,7 +325,7 @@ class VideoAnalyzer {
             hits = hits,
             summary = summary,
             analysisDurationMs = System.currentTimeMillis() - startTime,
-            appVersion = "2.4.0",
+            appVersion = "2.5.0",
             frameWidth = w,
             frameHeight = h,
             frameAtMaxSpeed = frameAtMax
