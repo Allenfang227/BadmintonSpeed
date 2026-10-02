@@ -35,7 +35,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.badmintonspeed.app.ui.analysis.AnalysisScreen
-import com.badmintonspeed.app.ui.calibrate.CalibrateScreen
 import com.badmintonspeed.app.ui.history.HistoryScreen
 import com.badmintonspeed.app.ui.history.RecordDetailScreen
 import com.badmintonspeed.app.ui.home.HomeScreen
@@ -76,7 +75,6 @@ fun AppRoot(vm: MainViewModel = viewModel()) {
 
     BackHandler(enabled = true) {
         when (screen) {
-            is Screen.Calibrate -> vm.goTo(Screen.Home)
             is Screen.Analyzing -> vm.cancelAnalysis()
             is Screen.Result -> vm.goTo(Screen.Home)
             is Screen.RecordDetail -> vm.goTo(Screen.History)
@@ -92,12 +90,11 @@ fun AppRoot(vm: MainViewModel = viewModel()) {
         }
     }
 
-    // 结果/标定/分析页：全屏（无侧栏，参考图 6-9 结果页全屏）
-    val fullScreen = screen is Screen.Calibrate || screen is Screen.Analyzing || screen is Screen.Result
+    // 结果/分析页：全屏（无侧栏，参考图 6-9 结果页全屏）
+    val fullScreen = screen is Screen.Analyzing || screen is Screen.Result
     if (fullScreen) {
         Box(Modifier.fillMaxSize().background(Background)) {
             when (val s = screen) {
-                is Screen.Calibrate -> CalibrateScreen(vm)
                 is Screen.Analyzing -> AnalysisScreen(vm)
                 is Screen.Result -> ResultScreen(vm)
                 else -> {}
@@ -134,8 +131,7 @@ fun AppRoot(vm: MainViewModel = viewModel()) {
 
             navItems.forEach { item ->
                 val selected = when (item.screen) {
-                    is Screen.Home -> screen is Screen.Home || screen is Screen.Calibrate ||
-                            screen is Screen.Analyzing || screen is Screen.Result
+                    is Screen.Home -> screen is Screen.Home || screen is Screen.Analyzing || screen is Screen.Result
                     is Screen.History -> screen is Screen.History || screen is Screen.RecordDetail
                     is Screen.Settings -> screen is Screen.Settings
                     is Screen.Tutorial -> screen is Screen.Tutorial

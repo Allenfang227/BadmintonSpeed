@@ -20,7 +20,7 @@ import kotlin.math.sqrt
  */
 class ShuttleOnnxDetector(
     context: Context,
-    private val confThreshold: Float = 0.28f,
+    private val confThreshold: Float = 0.15f,
     private val iouThreshold: Float = 0.45f
 ) {
 
@@ -65,8 +65,10 @@ class ShuttleOnnxDetector(
         val pixels = IntArray(resizedW * resizedH)
         resized.getPixels(pixels, 0, resizedW, 0, 0, resizedW, resizedH)
 
-        // CHW float [1,3,640,640]，归一化到 [0,1]
+        // CHW float [1,3,640,640]，归一化到 [0,1]，letterbox 填充用与训练一致的 114/255 灰
         val input = FloatArray(3 * INPUT_SIZE * INPUT_SIZE)
+        val padValue = 114f / 255f
+        java.util.Arrays.fill(input, padValue)
         val n = INPUT_SIZE * INPUT_SIZE
         for (i in pixels.indices) {
             val p = pixels[i]
@@ -97,16 +99,20 @@ class ShuttleOnnxDetector(
                 val rows = batch.size
                 val cols = batch[0].size
                 // YOLO11 coco 格式: [cx, cy, w, h, conf] 每列一个候选
+                // 防御：部分导出模型输出 0-1 归一化坐标，自动判别后放大到 640 尺度
                 val dets = ArrayList<Box>()
                 for (c in 0 until cols) {
+                    val cxRaw = batch[0][c]
+                    val cyRaw = batch[1][c]
+                    val wRaw = batch[2][c]
+                    val hRaw = batch[3][c]
                     val conf = batch[4][c]
-                    if (conf < confThreshold) continue
-                    val cx = batch[0][c]
-                    val cy = batch[1][c]
-                    val w = batch[2][c]
-                    val h = batch[3][c]
-                    if (w <= 0f || h <= 0f) continue
-                    dets.add(Box(cx, cy, w, h, conf))
+                    if (wRaw > 0f && hRaw > 0f && conf >= confThreshold) {
+                        val normalized =
+                            cxRaw in 0f..1f && cyRaw in 0f..1f && wRaw in 0f..1f && hRaw in 0f..1f
+                        val k = if (normalized) INPUT_SIZE.toFloat() else 1f
+                        dets.add(Box(cxRaw * k, cyRaw * k, wRaw * k, hRaw * k, conf))
+                    }
                 }
                 nms(dets, iouThreshold)
             }

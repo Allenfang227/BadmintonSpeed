@@ -100,12 +100,44 @@ enum class SpeedUnit(val displayName: String) {
     MPS("m/s")
 }
 
-/** 性能模式：决定分析帧率 */
+/** 性能模式：决定分析帧率（手机本地 ONNX 推理受 CPU 限制，5/10/15fps 采样即可完整还原轨迹） */
 enum class PerformanceMode(val displayName: String, val analysisFps: Int) {
-    BATTERY_SAVER("省电模式", 15),
-    BALANCED("均衡模式", 30),
-    TURBO("极速模式", 60)
+    BATTERY_SAVER("省电模式", 5),
+    BALANCED("均衡模式", 10),
+    TURBO("极速模式", 15)
 }
+
+/**
+ * 分析阶段（对应图2/图3 分模块进度面板）。
+ * 每个阶段包含细分步骤，分析时逐步骤实时上报。
+ */
+enum class AnalysisPhase(val title: String, val steps: List<String>) {
+    COURT(
+        "场地基准检测",
+        listOf("Canny边缘检测", "霍夫直线变换", "RANSAC迭代拟合", "单应性矩阵计算")
+    ),
+    SHUTTLE(
+        "羽毛球检测",
+        listOf("背景差分", "SVM分类")
+    ),
+    PLAYER(
+        "人员检测",
+        listOf("HOG特征提取", "区域扫描", "SVM判定", "人员ID赋值")
+    ),
+    HIT(
+        "击球点检测",
+        listOf("击球时刻定位", "球速计算", "击球类型判定")
+    )
+}
+
+/** 分析阶段实时更新（驱动进度面板） */
+data class StageUpdate(
+    val phase: AnalysisPhase,
+    val stepIndex: Int,        // 当前执行步骤序号（0 起）
+    val phasePercent: Float,   // 本模块进度 0-100
+    val totalPercent: Float,   // 总体进度 0-100
+    val done: Boolean = false // 模块是否完成
+)
 
 object SpeedUnitConverter {
     fun fromKmh(kmh: Float, unit: SpeedUnit): Float = when (unit) {

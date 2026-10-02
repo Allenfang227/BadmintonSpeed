@@ -2,13 +2,11 @@ package com.badmintonspeed.app.ui
 
 import android.app.Application
 import android.graphics.Bitmap
-import android.graphics.PointF
 import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.badmintonspeed.app.analysis.VideoAnalyzer
-import com.badmintonspeed.app.analysis.VideoFrameExtractor
 import com.badmintonspeed.app.data.HistoryRepository
 import com.badmintonspeed.app.data.ResultJson
 import com.badmintonspeed.app.data.SettingsRepository
@@ -16,6 +14,7 @@ import com.badmintonspeed.app.domain.AnalysisRecord
 import com.badmintonspeed.app.domain.AnalysisResult
 import com.badmintonspeed.app.domain.PerformanceMode
 import com.badmintonspeed.app.domain.SpeedUnit
+import com.badmintonspeed.app.domain.StageUpdate
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -50,19 +49,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _screen = MutableStateFlow<Screen>(Screen.Home)
     val screen: StateFlow<Screen> = _screen
 
-    // 视频与标定
+    // 视频
     private val _videoFile = MutableStateFlow<File?>(null)
     val videoFile: StateFlow<File?> = _videoFile
-    private val _previewBitmap = MutableStateFlow<Bitmap?>(null)
-    val previewBitmap: StateFlow<Bitmap?> = _previewBitmap
-    private val _corners = MutableStateFlow<List<PointF>>(emptyList())
-    val corners: StateFlow<List<PointF>> = _corners
 
-    // 分析进度
-    private val _progress = MutableStateFlow(0f)
-    val progress: StateFlow<Float> = _progress
-    private val _stage = MutableStateFlow("")
-    val stage: StateFlow<String> = _stage
+    // 分析进度（分模块步骤）
+    private val _stage = MutableStateFlow<StageUpdate?>(null)
+    val stage: StateFlow<StageUpdate?> = _stage
+    private val _analysisStartMs = MutableStateFlow(0L)
+    val analysisStartMs: StateFlow<Long> = _analysisStartMs
+
+    // 分析中的实时预览帧（带检测框）
+    private val _previewFrame = MutableStateFlow<Bitmap?>(null)
+    val previewFrame: StateFlow<Bitmap?> = _previewFrame
 
     // 结果与错误
     private val _result = MutableStateFlow<AnalysisResult?>(null)
@@ -81,7 +80,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _screen.value = screen
     }
 
-    /** 用户选择视频后：复制到私有目录并生成标定预览帧 */
+    /** 用户选择视频后：复制到私有目录，直接进入分析（场地由 AI 自动标定） */
     fun onVideoPicked(uri: Uri) {
         viewModelScope.launch {
             val ok = withContext(Dispatchers.IO) {
@@ -95,57 +94,41 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     input.use { ins ->
                         target.outputStream().use { out -> ins.copyTo(out) }
                     }
-                    val preview = VideoFrameExtractor().getFrame(target, 0L, 720)
                     _videoFile.value = target
-                    _previewBitmap.value = preview
-                    _corners.value = emptyList()
                     true
                 }.getOrElse { e ->
                     _error.value = "视频导入失败：${e.message}"
                     false
                 }
             }
-            if (ok) _screen.value = Screen.Calibrate
+            if (ok) startAnalysis()
         }
     }
 
-    fun addCorner(p: PointF) {
-        val cur = _corners.value
-        if (cur.size >= 4) return
-        _corners.value = cur + p
-    }
-
-    fun undoCorner() {
-        val cur = _corners.value
-        if (cur.isNotEmpty()) _corners.value = cur.dropLast(1)
-    }
-
-    fun clearCorners() {
-        _corners.value = emptyList()
-    }
-
-    /** 启动分析（MVP 流水线） */
+    /** 启动分析（AI 自动标定场地 + YOLO11 真实检测，分模块实时进度） */
     fun startAnalysis() {
         val file = _videoFile.value ?: run {
             _error.value = "请先选择视频"; return
         }
-        val cr = _corners.value
-        if (cr.size != 4) {
-            _error.value = "请先在画面上点击标定场地四角（左上→右上→右下→左下）"
-            return
-        }
         cancelFlag.set(false)
-        _progress.value = 0f
-        _stage.value = "准备中"
+        _stage.value = null
+        _previewFrame.value = null
+        _analysisStartMs.value = System.currentTimeMillis()
         _screen.value = Screen.Analyzing
 
         analyzeJob = viewModelScope.launch {
             try {
                 val fps = settings.performanceMode.analysisFps
-                val result = VideoAnalyzer().analyze(context, file, cr, fps) { p, s ->
-                    _progress.value = p
-                    _stage.value = s
-                }
+                val result = VideoAnalyzer().analyze(
+                    context = context,
+                    videoFile = file,
+                    analysisFps = fps,
+                    onStage = { s -> _stage.value = s },
+                    onPreviewFrame = { bmp ->
+                        _previewFrame.value?.recycle()
+                        _previewFrame.value = bmp
+                    }
+                )
                 _result.value = result
 
                 // 自动保存历史
@@ -176,6 +159,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun cancelAnalysis() {
         cancelFlag.set(true)
         analyzeJob?.cancel()
+        _previewFrame.value = null
         _screen.value = Screen.Home
     }
 
