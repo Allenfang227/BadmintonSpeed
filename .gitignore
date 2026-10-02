@@ -1,0 +1,24 @@
+# Gradle
+.gradle/
+build/
+app/build/
+local.properties
+
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# Signing (keep keystore local; CI builds debug APK)
+*.keystore
+*.jks
+
+# OS
+.DS_Store
+
+# Misc
+/captures/
+.externalNativeBuild/
+.cxx/
+*.log
+*.apk
