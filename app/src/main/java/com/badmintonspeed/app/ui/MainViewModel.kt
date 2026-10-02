@@ -125,7 +125,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     analysisFps = fps,
                     onStage = { s -> _stage.value = s },
                     onPreviewFrame = { bmp ->
-                        _previewFrame.value?.recycle()
+                        // 不主动 recycle：Compose 可能仍引用旧帧，交给 GC 回收
                         _previewFrame.value = bmp
                     }
                 )

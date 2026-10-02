@@ -2,6 +2,7 @@ package com.badmintonspeed.app.ui.analysis
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -13,7 +14,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -22,9 +25,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -98,13 +101,19 @@ fun AnalysisScreen(vm: MainViewModel) {
                         contentScale = ContentScale.Fit
                     )
                 } ?: Box(Modifier.fillMaxSize())
-                // 倍速标识（图2/图3 左下角 1.0x）
-                Text(
-                    "1.0x",
-                    color = Color.White,
-                    fontSize = 13.sp,
-                    modifier = Modifier.align(Alignment.BottomStart).padding(10.dp)
-                )
+                // 倍速按钮（可点击切换，图2/图3 左下角 1.0x）
+                val speeds = listOf("0.5x", "1.0x", "1.5x", "2.0x")
+                var speedIdx by remember { mutableStateOf(1) }
+                Box(
+                    Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(10.dp)
+                        .background(Color(0x66000000), RoundedCornerShape(6.dp))
+                        .clickable { speedIdx = (speedIdx + 1) % speeds.size }
+                        .padding(horizontal = 12.dp, vertical = 5.dp)
+                ) {
+                    Text(speeds[speedIdx], color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
+                }
                 // 底部细进度条
                 Box(
                     Modifier
@@ -130,34 +139,39 @@ fun AnalysisScreen(vm: MainViewModel) {
                     .weight(1f)
                     .fillMaxHeight()
             ) {
-                // 场地基准检测（图2 展示的检测中模块）
-                ModuleCard(
-                    phase = AnalysisPhase.COURT,
-                    stage = stage,
-                    highlight = stage?.phase == AnalysisPhase.COURT
-                )
-                Spacer(Modifier.height(8.dp))
-                ModuleCard(
-                    phase = AnalysisPhase.SHUTTLE,
-                    stage = stage,
-                    highlight = stage?.phase == AnalysisPhase.SHUTTLE
-                )
-                Spacer(Modifier.height(8.dp))
-                ModuleCard(
-                    phase = AnalysisPhase.PLAYER,
-                    stage = stage,
-                    highlight = stage?.phase == AnalysisPhase.PLAYER
-                )
-                Spacer(Modifier.height(8.dp))
-                ModuleCard(
-                    phase = AnalysisPhase.HIT,
-                    stage = stage,
-                    highlight = stage?.phase == AnalysisPhase.HIT
-                )
+                // 模块区可滚动（"右边的栏可拉"）
+                Column(
+                    Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .verticalScroll(rememberScrollState())
+                ) {
+                    ModuleCard(
+                        phase = AnalysisPhase.COURT,
+                        stage = stage,
+                        highlight = stage?.phase == AnalysisPhase.COURT
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    ModuleCard(
+                        phase = AnalysisPhase.SHUTTLE,
+                        stage = stage,
+                        highlight = stage?.phase == AnalysisPhase.SHUTTLE
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    ModuleCard(
+                        phase = AnalysisPhase.PLAYER,
+                        stage = stage,
+                        highlight = stage?.phase == AnalysisPhase.PLAYER
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    ModuleCard(
+                        phase = AnalysisPhase.HIT,
+                        stage = stage,
+                        highlight = stage?.phase == AnalysisPhase.HIT
+                    )
+                }
 
-                Spacer(Modifier.weight(1f))
-
-                // ---- 底部状态行（图2/图3）----
+                // ---- 底部状态行（固定，图2/图3）----
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                     Text("正在进行分析", color = OnBackground, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.weight(1f))

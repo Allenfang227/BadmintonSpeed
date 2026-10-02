@@ -47,10 +47,47 @@ class ShuttleOnnxDetector(
     }
 
     /**
-     * 在帧上检测羽毛球。@param cropScale 可选：为提升小目标精度可先放大画面。
+     * 在帧上检测羽毛球。
+     * @param hint 上一帧球心提示（可选）：全帧未检出时，在提示位置周围放大区域重检，显著提升小目标召回。
      * @return 映射回原始帧像素坐标的检测框列表
      */
-    fun detect(frame: Bitmap): List<Box> {
+    fun detect(frame: Bitmap, hint: Pair<Float, Float>? = null): List<Box> {
+        val boxes = detectFull(frame)
+        if (boxes.isNotEmpty() || hint == null) return boxes
+
+        // ---- 局部放大重检：上一球位置附近裁剪并放大到 640 ----
+        val w = frame.width
+        val h = frame.height
+        val cropSize = minOf(w, h) * 0.45f
+        if (cropSize < 40f) return emptyList()
+        val half = cropSize / 2f
+        val cx = hint.first.coerceIn(half, w - half)
+        val cy = hint.second.coerceIn(half, h - half)
+        val left = (cx - half).toInt()
+        val top = (cy - half).toInt()
+        val crop = try {
+            Bitmap.createBitmap(frame, left, top, cropSize.toInt(), cropSize.toInt())
+        } catch (e: Exception) {
+            return emptyList()
+        }
+        val scaled = Bitmap.createScaledBitmap(crop, INPUT_SIZE, INPUT_SIZE, true)
+        crop.recycle()
+        val local = runInference(scaled)
+        scaled.recycle()
+        if (local.isEmpty()) return emptyList()
+
+        val k = cropSize.toFloat() / INPUT_SIZE.toFloat()
+        return local.map { b ->
+            val x0 = (b.cx - b.w / 2f) * k + left
+            val y0 = (b.cy - b.h / 2f) * k + top
+            val x1 = (b.cx + b.w / 2f) * k + left
+            val y1 = (b.cy + b.h / 2f) * k + top
+            Box((x0 + x1) / 2f, (y0 + y1) / 2f, max(1f, x1 - x0), max(1f, y1 - y0), b.conf)
+        }
+    }
+
+    /** 全帧 letterbox 检测 */
+    private fun detectFull(frame: Bitmap): List<Box> {
         val srcW = frame.width
         val srcH = frame.height
 
@@ -88,15 +125,49 @@ class ShuttleOnnxDetector(
         }
         resized.recycle()
 
-        // ---- 推理 ----
+        val boxes = runInferenceOnInput(input)
+
+        // ---- 映射回原图坐标 ----
+        return boxes.map { b ->
+            val x0 = b.cx - b.w / 2f
+            val y0 = b.cy - b.h / 2f
+            val x1 = b.cx + b.w / 2f
+            val y1 = b.cy + b.h / 2f
+            // 去掉 letterbox 填充
+            val ox0 = ((x0 - padX) / scale).coerceIn(0f, srcW.toFloat())
+            val oy0 = ((y0 - padY) / scale).coerceIn(0f, srcH.toFloat())
+            val ox1 = ((x1 - padX) / scale).coerceIn(0f, srcW.toFloat())
+            val oy1 = ((y1 - padY) / scale).coerceIn(0f, srcH.toFloat())
+            val cw = max(1f, ox1 - ox0)
+            val ch = max(1f, oy1 - oy0)
+            Box(ox0 + cw / 2f, oy0 + ch / 2f, cw, ch, b.conf)
+        }
+    }
+
+    /** 对 640x640 的位图直接推理（局部重检用），返回 640 尺度坐标 */
+    private fun runInference(bitmap: Bitmap): List<Box> {
+        val pixels = IntArray(INPUT_SIZE * INPUT_SIZE)
+        bitmap.getPixels(pixels, 0, INPUT_SIZE, 0, 0, INPUT_SIZE, INPUT_SIZE)
+        val input = FloatArray(3 * INPUT_SIZE * INPUT_SIZE)
+        val n = INPUT_SIZE * INPUT_SIZE
+        for (i in pixels.indices) {
+            val p = pixels[i]
+            input[i] = (p shr 16 and 0xFF) / 255f
+            input[n + i] = (p shr 8 and 0xFF) / 255f
+            input[2 * n + i] = (p and 0xFF) / 255f
+        }
+        return runInferenceOnInput(input)
+    }
+
+    /** 输入 [1,3,640,640] CHW float，执行 ONNX 推理并解析输出 */
+    private fun runInferenceOnInput(input: FloatArray): List<Box> {
         val shape = longArrayOf(1, 3, INPUT_SIZE.toLong(), INPUT_SIZE.toLong())
         val inputBuf = java.nio.FloatBuffer.wrap(input)
-        val boxes: List<Box> = OnnxTensor.createTensor(env, inputBuf, shape).use { tensor ->
+        return OnnxTensor.createTensor(env, inputBuf, shape).use { tensor ->
             session.run(Collections.singletonMap("images", tensor)).use { output ->
                 val result = output[0].value as Array<*>
                 // [1,5,8400] -> 取第 0 个 batch
                 val batch: Array<FloatArray> = result[0] as Array<FloatArray>
-                val rows = batch.size
                 val cols = batch[0].size
                 // YOLO11 coco 格式: [cx, cy, w, h, conf] 每列一个候选
                 // 防御：部分导出模型输出 0-1 归一化坐标，自动判别后放大到 640 尺度
@@ -116,22 +187,6 @@ class ShuttleOnnxDetector(
                 }
                 nms(dets, iouThreshold)
             }
-        }
-
-        // ---- 映射回原图坐标 ----
-        return boxes.map { b ->
-            val x0 = b.cx - b.w / 2f
-            val y0 = b.cy - b.h / 2f
-            val x1 = b.cx + b.w / 2f
-            val y1 = b.cy + b.h / 2f
-            // 去掉 letterbox 填充
-            val ox0 = ((x0 - padX) / scale).coerceIn(0f, srcW.toFloat())
-            val oy0 = ((y0 - padY) / scale).coerceIn(0f, srcH.toFloat())
-            val ox1 = ((x1 - padX) / scale).coerceIn(0f, srcW.toFloat())
-            val oy1 = ((y1 - padY) / scale).coerceIn(0f, srcH.toFloat())
-            val cw = max(1f, ox1 - ox0)
-            val ch = max(1f, oy1 - oy0)
-            Box(ox0 + cw / 2f, oy0 + ch / 2f, cw, ch, b.conf)
         }
     }
 
