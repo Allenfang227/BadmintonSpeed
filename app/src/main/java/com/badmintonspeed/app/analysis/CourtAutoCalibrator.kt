@@ -28,6 +28,9 @@ import kotlin.math.sqrt
  */
 object CourtAutoCalibrator {
 
+    /** 方向组：同方向直线簇（角度 + 各线到原点距离 rho 列表 + 总投票数） */
+    data class DirGroup(val angleDeg: Double, val rhos: List<Double>, val totalVotes: Int)
+
     private const val WORK_MAX_SIDE = 720
     private const val THETA_STEP_DEG = 2.0
     private const val WHITE_SAT_DIFF = 70
@@ -65,7 +68,7 @@ object CourtAutoCalibrator {
         val maskC = sobelMask(gray, W, H)
 
         for (mask in listOf(maskA, maskB, maskC)) {
-            val corners = calibrateWithMask(mask, W, H)
+            val corners = calibrateWithMask(mask, W, H, allowPartial = true)
             if (corners != null) {
                 val inv = 1f / scale
                 return corners.map { PointF(it.x * inv, it.y * inv) }
@@ -102,8 +105,8 @@ object CourtAutoCalibrator {
         return mask
     }
 
-    /** 在给定掩码上执行：形态学闭 -> 霍夫 -> 方向组枚举 -> 四边形评分 */
-    private fun calibrateWithMask(maskIn: BooleanArray, W: Int, H: Int): List<PointF>? {
+    /** 在给定掩码上执行：形态学闭 -> 霍夫 -> 方向组枚举 -> 四边形评分；失败时尝试"部分线+羽毛球先验"构造 */
+    private fun calibrateWithMask(maskIn: BooleanArray, W: Int, H: Int, allowPartial: Boolean): List<PointF>? {
         // ---- 形态学闭：膨胀 + 腐蚀（3x3 十字）----
         val closed = BooleanArray(W * H)
         val dil = BooleanArray(W * H)
@@ -173,7 +176,6 @@ object CourtAutoCalibrator {
         val strong = candidates.filter { it.votes >= maxVotes * 0.15 }
 
         // ---- 角度聚类成方向组 ----
-        data class DirGroup(val angleDeg: Double, val rhos: List<Double>, val totalVotes: Int)
         val sorted = strong.sortedBy { it.thetaDeg }
         val groups = ArrayList<DirGroup>()
         var curAngles = ArrayList<Double>()
@@ -240,10 +242,82 @@ object CourtAutoCalibrator {
                 candidatesQ.add(Candidate(corners, score, area))
             }
         }
-        if (candidatesQ.isEmpty()) return null
+        if (candidatesQ.isEmpty()) return partialConstruct(maskIn, W, H, groups, allowPartial)
         val best = candidatesQ.maxBy { it.score }
-        if (best.score < 0.08) return null
+        if (best.score < 0.08) return partialConstruct(maskIn, W, H, groups, allowPartial)
         return best.corners
+    }
+
+    /**
+     * 阶段2：部分线 + 羽毛球先验构造完整场地（用户场景：斜拍远景，场地近端角在画面外）
+     *
+     * 原理：检测到"一组 ≥2 条平行线（边线）" + "另一组 ≥1 条线（底线/横线）"后，
+     * 用羽毛球场固定长宽比（13.40m / 6.10m ≈ 2.196）沿纵深方向把场地延伸到画面边缘，
+     * 构造出完整羽毛球场地覆盖在画面上——不要求四条边都可见。
+     */
+    private fun partialConstruct(
+        maskIn: BooleanArray, W: Int, H: Int, groups: List<DirGroup>, allowPartial: Boolean
+    ): List<PointF>? {
+        if (!allowPartial || groups.size < 2) return null
+        // 主组：平行线最多的一组（边线）
+        val gMain = groups.maxByOrNull { it.rhos.size } ?: return null
+        if (gMain.rhos.size < 2) return null
+        // 副组：与主组近似垂直、线数最多的一组（底线/横线）
+        val gOther = groups.filter { angleDiff(it.angleDeg, gMain.angleDeg) in 70.0..110.0 }
+            .maxByOrNull { it.rhos.size } ?: return null
+        if (gOther.rhos.isEmpty()) return null
+        // 副组若有 ≥2 条线，正常四边形逻辑应已成功，这里只处理"单条横线"场景
+        if (gOther.rhos.size > 1) return null
+
+        val m = gMain.rhos.sorted()
+        val r1 = quantile(m, 0.15)
+        val r2 = quantile(m, 0.85)
+        if (abs(r2 - r1) < 8) return null
+        val thetaM = gMain.angleDeg * PI / 180.0
+        val thetaO = gOther.angleDeg * PI / 180.0
+
+        val p1 = intersect(r1, thetaM, gOther.rhos[0], thetaO) ?: return null
+        val p2 = intersect(r2, thetaM, gOther.rhos[0], thetaO) ?: return null
+
+        // 纵深方向 = 主组线走向；选"远离画面中心"的方向（场地朝画面边缘延伸）
+        val dx = cos(thetaM + PI / 2)
+        val dy = sin(thetaM + PI / 2)
+        val cx = (p1.x + p2.x) / 2.0 - W / 2.0
+        val cy = (p1.y + p2.y) / 2.0 - H / 2.0
+        val dot = dx * cx + dy * cy
+        val ux = if (dot > 0) dx else -dx
+        val uy = if (dot > 0) dy else -dy
+
+        // 延伸长度：羽毛球先验 2.196 倍底线长度；若先到达画面边缘则以画面边缘为准
+        val baseLen = max(abs(p2.x - p1.x).toDouble(), abs(p2.y - p1.y).toDouble())
+        val depthFull = baseLen * 2.196
+        val tB = min(rayToBoundary(p1.x.toDouble(), p1.y.toDouble(), ux, uy, W, H),
+                     rayToBoundary(p2.x.toDouble(), p2.y.toDouble(), ux, uy, W, H))
+        var D = if (tB < depthFull) tB else depthFull
+        if (D < min(W, H) * 0.35) D = min(W, H) * 0.35
+        if (D <= 0) return null
+
+        val p1n = PointF((p1.x + ux * D).toFloat(), (p1.y + uy * D).toFloat())
+        val p2n = PointF((p2.x + ux * D).toFloat(), (p2.y + uy * D).toFloat())
+        val quad = listOf(p1, p2, p2n, p1n)
+        val corners = orderCorners(quad) ?: return null
+        val area = quadArea(corners)
+        if (area / (W * H) < 0.06) return null
+
+        // 贴合度验证：4 条边至少 2 条有真实白线支撑（可见边），避免墙面/座椅噪声线构造出假场地
+        val fits = edgeFitScores(maskIn, W, H, corners)
+        if (fits.count { it > 0.15 } < 2) return null
+        return corners
+    }
+
+    /** 射线到画面边界的距离（单位：方向向量长度倍数）；射线不出画面则返回极大值 */
+    private fun rayToBoundary(px: Double, py: Double, ux: Double, uy: Double, W: Int, H: Int): Double {
+        var t = Double.MAX_VALUE
+        if (ux > 1e-9) t = min(t, (W - 1 - px) / ux)
+        if (ux < -1e-9) t = min(t, px / -ux)
+        if (uy > 1e-9) t = min(t, (H - 1 - py) / uy)
+        if (uy < -1e-9) t = min(t, py / -uy)
+        return t
     }
 
     /** Otsu 最大类间方差阈值 */
@@ -355,19 +429,28 @@ object CourtAutoCalibrator {
 
     /**
      * 白线贴合度：沿四边形四边均匀采样，统计采样点附近是否有掩码线像素。
-     * 得分 0-1，越高说明检测框越贴合实际场地线。
+     * 得分 0-1，越高说明检测框越贴合实际场地线。画面外采样点跳过（不计分）。
      */
     private fun lineFitScore(mask: BooleanArray, W: Int, H: Int, corners: List<PointF>): Double {
-        var hit = 0
-        var total = 0
+        val fits = edgeFitScores(mask, W, H, corners)
+        if (fits.isEmpty()) return 0.0
+        return fits.average()
+    }
+
+    /** 每条边单独的白线贴合度（返回 4 个值，对应 4 条边） */
+    private fun edgeFitScores(mask: BooleanArray, W: Int, H: Int, corners: List<PointF>): List<Double> {
+        val scores = ArrayList<Double>(4)
         for (e in 0 until 4) {
             val a = corners[e]
             val b = corners[(e + 1) % 4]
+            var hit = 0
+            var total = 0
             val steps = 40
             for (k in 0..steps) {
                 val f = k.toFloat() / steps
-                val x = (a.x + (b.x - a.x) * f).toInt().coerceIn(0, W - 1)
-                val y = (a.y + (b.y - a.y) * f).toInt().coerceIn(0, H - 1)
+                val x = (a.x + (b.x - a.x) * f).roundToInt()
+                val y = (a.y + (b.y - a.y) * f).roundToInt()
+                if (x < 0 || x >= W || y < 0 || y >= H) continue // 画面外采样点不计
                 total++
                 var found = false
                 for (dy in -3..3) {
@@ -382,7 +465,8 @@ object CourtAutoCalibrator {
                 }
                 if (found) hit++
             }
+            scores.add(if (total == 0) 0.0 else hit.toDouble() / total)
         }
-        return if (total == 0) 0.0 else hit.toDouble() / total
+        return scores
     }
 }
