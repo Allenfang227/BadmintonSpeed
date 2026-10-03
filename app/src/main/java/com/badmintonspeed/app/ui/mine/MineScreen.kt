@@ -1,5 +1,6 @@
 package com.badmintonspeed.app.ui.mine
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -27,13 +28,18 @@ import androidx.compose.ui.unit.sp
 import com.badmintonspeed.app.domain.PerformanceMode
 import com.badmintonspeed.app.domain.SpeedUnit
 import com.badmintonspeed.app.ui.MainViewModel
+import com.badmintonspeed.app.ui.theme.Error
 import com.badmintonspeed.app.ui.theme.OnSurfaceVariant
 import com.badmintonspeed.app.ui.theme.Primary
 import com.badmintonspeed.app.ui.theme.Surface
 
-/** 我的页：速度单位 / 性能模式 / 检测灵敏度 */
+/** 我的页：速度单位 / 性能模式 / 检测灵敏度 / 关于 / 退出 */
 @Composable
-fun MineScreen(vm: MainViewModel) {
+fun MineScreen(
+    vm: MainViewModel,
+    onAbout: () -> Unit = {},
+    onExit: () -> Unit = {}
+) {
     val s = vm.settings
     var unitMenu by remember { mutableStateOf(false) }
     var modeMenu by remember { mutableStateOf(false) }
@@ -89,24 +95,42 @@ fun MineScreen(vm: MainViewModel) {
             color = OnSurfaceVariant,
             fontSize = 12.sp
         )
+        Spacer(Modifier.height(28.dp))
+
+        // 关于 / 退出（v2.19 左侧导航移除后并入"我的"页）
+        MenuRow("关于", "v2.19.0", expanded = false, onOpen = onAbout)
+        Spacer(Modifier.height(14.dp))
+        MenuRow("退出/注销", "退出", expanded = false, onOpen = onExit, danger = true)
     }
 }
 
 @Composable
-private fun MenuRow(label: String, value: String, expanded: Boolean, onOpen: () -> Unit) {
+private fun MenuRow(
+    label: String,
+    value: String,
+    expanded: Boolean,
+    danger: Boolean = false,
+    onOpen: () -> Unit
+) {
     Surface(
         shape = RoundedCornerShape(16.dp),
         color = Surface,
-        modifier = Modifier.fillMaxWidth().padding(end = 4.dp)
+        modifier = Modifier.fillMaxWidth().padding(end = 4.dp).clickable { onOpen() }
     ) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 14.dp),
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(label, color = Color.White, fontSize = 14.sp)
+            Text(
+                label,
+                color = if (danger) Error else Color.White,
+                fontSize = 14.sp
+            )
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(value, color = Primary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                if (value.isNotEmpty()) {
+                    Text(value, color = if (danger) Error else Primary, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+                }
                 Text("  ▾", color = OnSurfaceVariant, fontSize = 12.sp)
             }
         }

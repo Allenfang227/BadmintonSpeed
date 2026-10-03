@@ -30,6 +30,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.badmintonspeed.app.domain.AnalysisRecord
 import com.badmintonspeed.app.ui.MainViewModel
+import com.badmintonspeed.app.ui.components.LiquidGlassCard
 import com.badmintonspeed.app.ui.theme.Background
 import com.badmintonspeed.app.ui.theme.DividerColor
 import com.badmintonspeed.app.ui.theme.OnBackground
@@ -150,11 +151,7 @@ private fun ModeCard(
     enabled: Boolean,
     onClick: () -> Unit = {}
 ) {
-    Card(
-        modifier = modifier,
-        shape = RoundedCornerShape(20.dp),
-        colors = CardDefaults.cardColors(containerColor = Surface)
-    ) {
+    LiquidGlassCard(modifier = modifier, cornerRadius = 24.dp) {
         Column(
             Modifier.fillMaxWidth().padding(28.dp),
             horizontalAlignment = Alignment.CenterHorizontally
