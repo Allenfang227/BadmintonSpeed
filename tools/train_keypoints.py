@@ -30,11 +30,30 @@
   }
   点可缺（角在画面外就不标），但每张图至少 4 点。
 
+  可选 "lines" 字段（语义分类头训练数据；负样本越多误检越少）：
+  {
+    "lines": [
+      {"type": 1, "points": [[500,700], [3600,1900]]},   # 双打边线
+      {"type": 6, "points": [[4000,900], [4500,1100]]},  # 干扰线（邻场/广告/地板缝）
+      ...
+    ]
+  }
+  type 见 LINE_TYPES。没有 lines 字段的旧标注不影响训练（分类损失跳过）。
+
 网络头部（轻量，CPU/手机可训练）：
   主干 MobileNetV3-Large（torchvision 预训练）→ 热图头(1x1 conv) 输出
   K=12 通道 H×W 热图 + 1 通道置信度热图（最大峰即置信度）。
   损失 = 各点加权 MSE(热图) + 背景项 + 点置信度 BCE。
   （若未来要更高精度：换 HRNet-W32/SimCC，原理相同。）
+
+v2.17 新增语义分类头（B误检修复第 2 步）：
+  标注 json 可额外带 "lines" 字段，把候选线段分为 7 类：
+    {0: 单打边线, 1: 双打边线, 2: 端线, 3: 前发球线, 4: 后发球线, 5: 中线, 6: 干扰线}
+  干扰线=邻场线/地板缝/广告条幅/排球场地线（负样本重点注入）。
+  网络加一个线分类分支：对热图特征做线段 ROI 采样 → 7 类 logits；
+  训练损失 = 热图 MSE + 可见点 BCE + 线分类 CE。
+  推理时（App 侧）对霍夫候选线段算类别，类 6 干扰线直接丢弃，
+  同一位置多条候选按 类别置信度 + 几何校验分 + IoU 加权选最优。
 
 用法：
   python3 train_keypoints.py --data ./labels/ --epochs 30 --out ./model.onnx
@@ -74,6 +93,9 @@ POINT_NAMES = list(TEMPLATE.keys())   # 12 个点（10~14 范围内）
 K = len(POINT_NAMES)
 SIGMA = 8                              # 热图高斯半径 px（≈线宽一半，40mm 投影约 5-12px）
 INPUT = 384                            # 训练输入边长（缩到 384 快；推理可同尺寸）
+# 语义分类头：6 类场地线 + 1 类干扰线（v2.17）
+LINE_TYPES = ["单打边线", "双打边线", "端线", "前发球线", "后发球线", "中线", "干扰线"]
+N_LINES = len(LINE_TYPES)              # 7
 
 
 def make_heatmap(img_w, img_h, pts, sigma=SIGMA):
@@ -124,7 +146,26 @@ class CourtDataset(Dataset):
             else:
                 pts.append((p["x"] * INPUT / w0, p["y"] * INPUT / h0, 1))
         heat, vis = make_heatmap(INPUT // 4, INPUT // 4, pts)  # 热图下采样 4x
-        return img, torch.from_numpy(heat), torch.from_numpy(vis)
+        # v2.17 语义分类：线段栅格标签（每格 1x1 点做类别投票）
+        lines = torch.zeros((N_LINES, INPUT // 4, INPUT // 4), dtype=torch.float32)
+        lines_mask = torch.zeros(1, dtype=torch.float32)
+        for ln in ann.get("lines", []):
+            t = int(ln.get("type", 6))
+            if t < 0 or t >= N_LINES:
+                t = 6
+            pts_l = ln.get("points", [])
+            if len(pts_l) < 2:
+                continue
+            # 线段上均匀采样 32 个点，写入对应类别的热图
+            for i in range(32):
+                tt = i / 31.0
+                x = (pts_l[0][0] * (1 - tt) + pts_l[-1][0] * tt) * (INPUT // 4) / w0
+                y = (pts_l[0][1] * (1 - tt) + pts_l[-1][1] * tt) * (INPUT // 4) / h0
+                xi = int(min(max(x, 0), (INPUT // 4) - 1))
+                yi = int(min(max(y, 0), (INPUT // 4) - 1))
+                lines[t, yi, xi] = 1.0
+            lines_mask[0] = 1.0
+        return img, torch.from_numpy(heat), torch.from_numpy(vis), lines, lines_mask
 
 
 class KeypointNet(nn.Module):
@@ -147,6 +188,8 @@ class KeypointNet(nn.Module):
                 nn.AdaptiveAvgPool2d((12, 12)),
             )
         self.head = nn.Conv2d(feat, k + 1, 1)
+        # v2.17 语义分类头：7 类线（6 场地线 + 干扰线）
+        self.cls_head = nn.Conv2d(feat, N_LINES, 1)
 
     def forward(self, x):
         f = self.backbone(x)              # (B,C,12,12)
@@ -155,20 +198,25 @@ class KeypointNet(nn.Module):
         out = self.head(f)                # (B,K+1,H,W)
         heat = out[:, :K]                 # (B,K,H,W)
         conf = out[:, K:].mean(dim=(2, 3))  # (B,K) 置信度（logit）
-        return heat, conf
+        cls = self.cls_head(f)            # (B,7,H,W) 线段类别 logits
+        return heat, conf, cls
 
 
 def train_epoch(model, loader, opt):
     model.train()
     total = 0.0
-    for img, heat, vis in loader:
+    for img, heat, vis, lines, lines_mask in loader:
         opt.zero_grad()
-        h, conf = model(img)
-        # 损失 = 热图 MSE（仅可见点） + 置信度 BCE（是否可见）
+        h, conf, cls = model(img)
+        # 损失 = 热图 MSE（仅可见点） + 置信度 BCE（是否可见） + 线分类 CE（有 lines 标注时）
         mse = ((h - heat) ** 2).mean(dim=(2, 3))  # (B,K)
         mse = (mse * vis).sum() / (vis.sum() + 1e-6)
         bce = F.binary_cross_entropy_with_logits(conf, vis)
         loss = mse + 0.1 * bce
+        if lines_mask.sum() > 0:
+            ce = -(F.log_softmax(cls, dim=1) * lines).sum(dim=(2, 3))  # (B,)
+            ce = (ce * lines_mask.squeeze(1)).sum() / lines_mask.sum()
+            loss = loss + 0.3 * ce
         loss.backward()
         opt.step()
         total += loss.item()
