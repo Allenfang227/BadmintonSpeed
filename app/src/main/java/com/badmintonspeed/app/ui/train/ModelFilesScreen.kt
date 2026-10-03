@@ -1,6 +1,8 @@
 package com.badmintonspeed.app.ui.train
 
 import android.content.Intent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -22,12 +24,23 @@ import com.badmintonspeed.app.ui.theme.Background
 import com.badmintonspeed.app.ui.theme.Surface
 import com.badmintonspeed.app.ui.components.liveShadow
 
-/** 模型目录文件列表：查看 Download/BadmintonSpeed 内容，逐项分享 */
+/** 模型目录文件列表：查看 Download/BadmintonSpeed 内容，逐项分享 / 导入他人模型包 */
 @Composable
 fun ModelFilesScreen(onBack: () -> Unit) {
     val context = LocalContext.current
     val tabs = listOf("labels（场地标注）", "ball_samples（球样本）", "ball_model（模型）")
     var tab by remember { mutableStateOf(0) }
+    var refresh by remember { mutableStateOf(0) }
+    var importLog by remember { mutableStateOf("") }
+
+    val importZipLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        uri ?: return@rememberLauncherForActivityResult
+        val n = CourtModelRepo.importZip(context, uri)
+        importLog = if (n >= 0) "导入成功：合并 ${n} 个文件（样本/标注叠加，模型模板去重）" else "导入失败：无法解析该模型包（需为 App 导出的 model_backup.zip）"
+        refresh++   // 触发列表刷新
+    }
 
     Column(Modifier.fillMaxSize().background(Background).padding(24.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -45,7 +58,16 @@ fun ModelFilesScreen(onBack: () -> Unit) {
                     }
                     context.startActivity(Intent.createChooser(send, "分享全部"))
                 }
-            }) { Text("打包分享") }
+            }, modifier = Modifier.liveShadow(cornerRadius = 10.dp, strengthDp = 4.dp, alpha = 0.35f)) { Text("打包分享") }
+            Spacer(Modifier.width(10.dp))
+            Button(
+                onClick = { importZipLauncher.launch(arrayOf("application/zip", "application/octet-stream", "*/*")) },
+                modifier = Modifier.liveShadow(cornerRadius = 10.dp, strengthDp = 4.dp, alpha = 0.35f)
+            ) { Text("导入模型包") }
+        }
+        if (importLog.isNotEmpty()) {
+            Spacer(Modifier.height(8.dp))
+            Text(importLog, color = if (importLog.startsWith("导入成功")) Color(0xFF4ADE80) else Color(0xFFFFB74D), fontSize = 13.sp)
         }
         Spacer(Modifier.height(16.dp))
         Row {
@@ -60,7 +82,7 @@ fun ModelFilesScreen(onBack: () -> Unit) {
         }
         Spacer(Modifier.height(12.dp))
         val sub = listOf("labels", "ball_samples", "ball_model")[tab]
-        val items = remember(tab) { CourtModelRepo.listPublic(context, sub) }
+        val items = remember(tab, refresh) { CourtModelRepo.listPublic(context, sub) }
         if (items.isEmpty()) {
             Text("目录为空（可先手动标定场地 / 训练模型后回来查看）", color = Color(0xFF90A4AE), fontSize = 13.sp)
         } else {

@@ -28,7 +28,15 @@ object BallLearner {
         val count: Int
     )
 
-    /** 解析图片里的红色标注框（HSV 红色掩码 → 连通域 → 矩形） */
+    /**
+     * 解析图片里的红色标注框（v2.21 增强：只识别"空心红框"）
+     *
+     * 原算法会把任何大片红色区域（广告、球衣、海报、墙面）当成框 → 误检。
+     * 改进：候选连通域必须同时满足"空心框"特征——
+     *   1. 红色像素占 bbox 面积比例低（fillRatio < 0.5，实心红块接近 1.0）
+     *   2. bbox 四边边带红色占比高（≥ 0.35，说明红色集中在边框轮廓上）
+     *   3. 四边都有红色（框闭合），排除只有一条红边的物体
+     */
     fun detectRedBoxes(bmp: Bitmap): List<Rect> {
         val W = bmp.width; val H = bmp.height
         val px = IntArray(W * H)
@@ -68,11 +76,48 @@ object BallLearner {
             }
             val bw = maxX - minX + 1; val bh = maxY - minY + 1
             val frameArea = W * H
-            // 过滤：框不能太小（噪点）也不能太大（整图），长宽 0.5~5 倍
+            // 基础过滤：太小（噪点）/ 太大（整图）/ 长宽比畸形
             if (cnt < 80 || cnt > frameArea * 0.6f) continue
             if (bw < 10 || bh < 10) continue
             val ar = maxOf(bw, bh).toFloat() / minOf(bw, bh)
-            if (ar > 6f) continue
+            if (ar > 8f) continue
+
+            // ===== 空心红框校验（v2.21）=====
+            // 1) 填充率：红色像素 / bbox 面积。实心红块 ≈ 1.0；空心框（细线）通常 < 0.45
+            val boxArea = bw.toLong() * bh
+            val fillRatio = cnt.toFloat() / boxArea
+            if (fillRatio >= 0.5f) continue   // 大片实心红 → 不是框
+
+            // 2) 四边边带红色占比：取 bbox 上下左右各 3px 边带
+            val band = 3
+            var bandRed = 0; var bandPx = 0
+            for (x in minX..maxX) for (dy in 0 until minOf(band, bh)) {
+                if (red[(minY + dy) * W + x]) bandRed++
+                bandPx++
+                if (bh > band && red[(maxY - dy) * W + x]) bandRed++
+                if (bh > band) bandPx++
+            }
+            for (y in minY..maxY) for (dx in 0 until minOf(band, bw)) {
+                if (red[y * W + (minX + dx)]) bandRed++
+                bandPx++
+                if (bw > band && red[y * W + (maxX - dx)]) bandRed++
+                if (bw > band) bandPx++
+            }
+            val bandRatio = bandRed.toFloat() / bandPx
+            if (bandRatio < 0.35f) continue   // 红色不在边框上 → 不是框
+
+            // 3) 四边各自都有红色（框闭合，排除只有单边红的物体）
+            var topOk = false; var bottomOk = false; var leftOk = false; var rightOk = false
+            for (x in minX..maxX) {
+                if (red[minY * W + x]) topOk = true
+                if (red[maxY * W + x]) bottomOk = true
+            }
+            for (y in minY..maxY) {
+                if (red[y * W + minX]) leftOk = true
+                if (red[y * W + maxX]) rightOk = true
+            }
+            if (!(topOk && bottomOk && leftOk && rightOk)) continue
+
             // 外扩 10%（把球完整包进来，去掉红框线）
             val padX = (bw * 0.12f).toInt() + 2
             val padY = (bh * 0.12f).toInt() + 2

@@ -77,6 +77,8 @@ fun TrainModeScreen(onOpenFiles: () -> Unit, onBack: () -> Unit) {
         }
         busy = false
         sampleCount = samplesDir.listFiles()?.size ?: 0
+        // v2.21：样本立即同步公共目录（卸载不丢）
+        if (added > 0) CourtModelRepo.exportToPublic(context, "ball_samples")
         log += "\n完成：新增样本 $added 个${if (failed > 0) "，$failed 张图未检出红框" else ""}"
     }
 

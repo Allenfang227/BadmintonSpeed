@@ -80,7 +80,12 @@ fun MineScreen(
         Spacer(Modifier.height(14.dp))
 
         // 检测灵敏度
-        Surface(shape = RoundedCornerShape(16.dp), color = Surface) {
+        Surface(
+            shape = RoundedCornerShape(16.dp),
+            color = Surface,
+            modifier = Modifier.fillMaxWidth().padding(end = 4.dp)
+                .liveShadow(cornerRadius = 16.dp, strengthDp = 6.dp, alpha = 0.38f)
+        ) {
             Row(
                 Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 14.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -96,12 +101,6 @@ fun MineScreen(
             color = OnSurfaceVariant,
             fontSize = 12.sp
         )
-        Spacer(Modifier.height(28.dp))
-
-        // 关于 / 退出（v2.19 左侧导航移除后并入"我的"页）
-        MenuRow("关于", "v2.19.0", expanded = false, onOpen = onAbout)
-        Spacer(Modifier.height(14.dp))
-        MenuRow("退出/注销", "退出", expanded = false, onOpen = onExit, danger = true)
     }
 }
 

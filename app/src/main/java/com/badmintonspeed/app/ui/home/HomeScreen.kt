@@ -2,11 +2,12 @@ package com.badmintonspeed.app.ui.home
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -14,36 +15,29 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.badmintonspeed.app.domain.AnalysisRecord
 import com.badmintonspeed.app.ui.MainViewModel
-import com.badmintonspeed.app.ui.components.LiquidGlassCard
 import com.badmintonspeed.app.ui.components.liveShadow
-import com.badmintonspeed.app.ui.theme.Background
 import com.badmintonspeed.app.ui.theme.DividerColor
-import com.badmintonspeed.app.ui.theme.OnBackground
 import com.badmintonspeed.app.ui.theme.OnSurfaceVariant
 import com.badmintonspeed.app.ui.theme.Primary
-import com.badmintonspeed.app.ui.theme.Surface
-import com.badmintonspeed.app.ui.theme.SurfaceBright
 import com.badmintonspeed.app.ui.theme.SurfaceVariant
 
 /**
- * 主页（图2）：选择测速模式。
- * 左侧导航栏由 AppRoot 承载；本页为内容区。
+ * 主页（v2.21 回退图1 原版）：居中标题 + 深色大卡，全宽胶囊按钮；
+ * 卡片/按钮均带陀螺仪裸眼 3D 动态阴影。
  */
 @Composable
 fun HomeScreen(
@@ -53,56 +47,62 @@ fun HomeScreen(
     records: List<AnalysisRecord>
 ) {
     Column(
-        Modifier.fillMaxSize().padding(horizontal = 48.dp, vertical = 36.dp)
+        Modifier.fillMaxSize().padding(horizontal = 48.dp, vertical = 30.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        // 标题
+        Spacer(Modifier.height(6.dp))
+        // 居中标题
         Text(
             "选择测速模式",
             color = Color.White,
-            fontSize = 34.sp,
+            fontSize = 32.sp,
             fontWeight = FontWeight.Bold
         )
-        Text(
-            "Select Speed Test Mode",
-            color = OnSurfaceVariant,
-            fontSize = 16.sp
-        )
-        Spacer(Modifier.height(40.dp))
+        Spacer(Modifier.height(8.dp))
+        // 副标题：左右横线装饰
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.width(60.dp).height(1.dp).background(DividerColor))
+            Text(
+                "  Select Speed Test Mode  ",
+                color = OnSurfaceVariant,
+                fontSize = 15.sp
+            )
+            Box(Modifier.width(60.dp).height(1.dp).background(DividerColor))
+        }
+        Spacer(Modifier.height(28.dp))
 
-        Row(Modifier.fillMaxWidth()) {
-            // ---- 实时测速（开发中） ----
+        // 三张模式大卡（横屏等宽，占满主体高度）
+        Row(Modifier.fillMaxWidth().weight(1f)) {
             ModeCard(
-                modifier = Modifier.weight(1f).padding(end = 28.dp),
+                modifier = Modifier.weight(1f).fillMaxHeight().padding(end = 12.dp),
                 icon = { RadarIcon() },
                 title = "实时测速",
                 desc = "把手机对准正在打球的场地，本APP会实时计算并显示每帧球的球速并还原出3D羽球轨迹。",
                 buttonText = "开发中",
-                enabled = false
+                active = false,
+                onClick = {}
             )
-            // ---- 上传视频测速（进入） ----
             ModeCard(
-                modifier = Modifier.weight(1f).padding(start = 28.dp),
+                modifier = Modifier.weight(1f).fillMaxHeight().padding(horizontal = 12.dp),
                 icon = { UploadIcon() },
                 title = "上传视频测速",
                 desc = "上传录制好的打球视频，本APP会计算整个视频后，再显示每帧球速并还原出3D羽球轨迹。",
                 buttonText = "进入",
-                enabled = true,
+                active = true,
                 onClick = onStart
             )
-            // ---- 模型训练（进入） ----
             ModeCard(
-                modifier = Modifier.weight(1f).padding(start = 28.dp),
+                modifier = Modifier.weight(1f).fillMaxHeight().padding(start = 12.dp),
                 icon = { TrainIcon() },
                 title = "模型训练",
                 desc = "上传红框标注羽毛球的图片，AI 在本地学习标注区域，训练出专属羽毛球模型，实测时自动调用。",
                 buttonText = "进入",
-                enabled = true,
+                active = true,
                 onClick = onTrain
             )
         }
 
-        Spacer(Modifier.weight(1f))
-
+        Spacer(Modifier.height(20.dp))
         // 底部统计条
         val best = records.maxOfOrNull { it.maxSpeedKmh } ?: 0f
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
@@ -118,30 +118,11 @@ fun HomeScreen(
             )
         }
         Spacer(Modifier.height(8.dp))
-        Box(
-            Modifier
-                .fillMaxWidth()
-                .height(1.dp)
-                .background(DividerColor)
-        )
+        Box(Modifier.fillMaxWidth().height(1.dp).background(DividerColor))
     }
 }
 
-@Composable
-private fun TrainIcon() {
-    androidx.compose.foundation.Canvas(Modifier.size(64.dp)) {
-        val c = Color(0xFF4FC3F7)
-        drawCircle(color = c, radius = size.minDimension / 2.2f, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 5f))
-        drawCircle(color = c, radius = size.minDimension / 6f)
-        // 简易"脑/网络"：三个点连线
-        val cx = size.width / 2f; val cy = size.height / 2f
-        val r = size.minDimension / 2.2f
-        drawCircle(color = c, radius = 4f, center = androidx.compose.ui.geometry.Offset(cx - r * 0.6f, cy - r * 0.5f))
-        drawCircle(color = c, radius = 4f, center = androidx.compose.ui.geometry.Offset(cx + r * 0.6f, cy + r * 0.5f))
-        drawCircle(color = c, radius = 4f, center = androidx.compose.ui.geometry.Offset(cx + r * 0.5f, cy - r * 0.6f))
-    }
-}
-
+/** 深色模式大卡（图1）：黑色圆角图标方块 + 标题描述 + 底部全宽胶囊按钮 */
 @Composable
 private fun ModeCard(
     modifier: Modifier,
@@ -149,47 +130,72 @@ private fun ModeCard(
     title: String,
     desc: String,
     buttonText: String,
-    enabled: Boolean,
-    onClick: () -> Unit = {}
+    active: Boolean,
+    onClick: () -> Unit
 ) {
-    LiquidGlassCard(modifier = modifier, cornerRadius = 24.dp) {
+    Box(
+        modifier
+            .liveShadow(cornerRadius = 20.dp, strengthDp = 10.dp, alpha = 0.4f)
+            .clip(RoundedCornerShape(20.dp))
+            .background(SurfaceVariant)
+    ) {
         Column(
-            Modifier.fillMaxWidth().padding(28.dp),
+            Modifier.fillMaxSize().padding(24.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Box(
                 Modifier
-                    .width(64.dp)
-                    .height(64.dp)
-                    .background(SurfaceBright, RoundedCornerShape(18.dp)),
+                    .size(66.dp)
+                    .background(Color(0xFF0A0F0C), RoundedCornerShape(16.dp)),
                 contentAlignment = Alignment.Center
             ) { icon() }
-            Spacer(Modifier.height(20.dp))
-            Text(title, color = Color.White, fontSize = 22.sp, fontWeight = FontWeight.Bold)
-            Spacer(Modifier.height(12.dp))
+            Spacer(Modifier.height(18.dp))
+            Text(title, color = Color.White, fontSize = 21.sp, fontWeight = FontWeight.Bold)
+            Spacer(Modifier.height(10.dp))
             Text(
                 desc,
                 color = OnSurfaceVariant,
-                fontSize = 14.sp,
-                lineHeight = 22.sp
+                fontSize = 13.sp,
+                lineHeight = 20.sp,
+                textAlign = TextAlign.Center
             )
-            Spacer(Modifier.height(28.dp))
-            Button(
-                onClick = onClick,
-                enabled = enabled,
-                shape = RoundedCornerShape(12.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (enabled) Primary else Color(0xFF2A3B31),
-                    contentColor = if (enabled) Color(0xFF06120A) else OnSurfaceVariant,
-                    disabledContainerColor = Color(0xFF2A3B31),
-                    disabledContentColor = OnSurfaceVariant
-                ),
-                modifier = Modifier.width(140.dp).height(46.dp)
-                    .liveShadow(cornerRadius = 12.dp, strengthDp = 5.dp, alpha = 0.45f)
+            Spacer(Modifier.weight(1f))
+            // 全宽胶囊按钮：可进入=亮绿黑字；开发中=深绿白字
+            Box(
+                Modifier
+                    .fillMaxWidth()
+                    .height(46.dp)
+                    .liveShadow(cornerRadius = 23.dp, strengthDp = 6.dp, alpha = 0.4f)
+                    .clip(RoundedCornerShape(23.dp))
+                    .background(if (active) Primary else Color(0xFF15803D))
+                    .clickable(enabled = active, onClick = onClick),
+                contentAlignment = Alignment.Center
             ) {
-                Text(buttonText, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    buttonText,
+                    color = if (active) Color(0xFF06120A) else Color.White,
+                    fontSize = 17.sp,
+                    fontWeight = FontWeight.Bold
+                )
             }
         }
+    }
+}
+
+@Composable
+private fun TrainIcon() {
+    Canvas(Modifier.size(36.dp)) {
+        val c = Color(0xFF4FC3F7)
+        drawCircle(
+            color = c, radius = size.minDimension / 2.2f,
+            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 4f)
+        )
+        drawCircle(color = c, radius = size.minDimension / 7f)
+        val cx = size.width / 2f; val cy = size.height / 2f
+        val r = size.minDimension / 2.2f
+        drawCircle(color = c, radius = 3.5f, center = Offset(cx - r * 0.6f, cy - r * 0.5f))
+        drawCircle(color = c, radius = 3.5f, center = Offset(cx + r * 0.6f, cy + r * 0.5f))
+        drawCircle(color = c, radius = 3.5f, center = Offset(cx + r * 0.5f, cy - r * 0.6f))
     }
 }
 
