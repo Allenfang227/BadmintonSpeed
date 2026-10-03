@@ -121,7 +121,8 @@ class VideoAnalyzer {
         onStage: (StageUpdate) -> Unit,
         onPreviewFrame: (Bitmap) -> Unit,
         manualCourtCorners: List<PointF>? = null,
-        onCourt: (CourtResult) -> Unit = {}
+        onCourt: (CourtResult) -> Unit = {},
+        roiPolygon: List<PointF>? = null // v2.17：用户首帧框选的目标场地多边形（B误检修复）
     ): AnalysisResult = withContext(Dispatchers.Default) {
         val startTime = System.currentTimeMillis()
 
@@ -207,7 +208,7 @@ class VideoAnalyzer {
             val pct = 10f + 60f * ((idx + 1).toFloat() / sampleList.size)
             onStage(StageUpdate(AnalysisPhase.COURT, 0, pct, 9f + 10f * ((idx + 1).toFloat() / sampleList.size)))
             val r = try {
-                CourtAutoCalibrator.calibrate(probe)
+                CourtAutoCalibrator.calibrate(probe, roiPolygon)
             } catch (e: Exception) {
                 null // 防闪退：单帧检测异常不中断整体流程
             }
@@ -574,7 +575,7 @@ class VideoAnalyzer {
             hits = hits,
             summary = summary,
             analysisDurationMs = System.currentTimeMillis() - startTime,
-            appVersion = "2.16.0",
+            appVersion = "2.17.0",
             frameWidth = w,
             frameHeight = h,
             frameAtMaxSpeed = frameAtMax,

@@ -1,6 +1,7 @@
 package com.badmintonspeed.app.ui
 
 import android.app.Application
+import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.PointF
 import android.net.Uri
@@ -34,6 +35,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 sealed interface Screen {
     object Home : Screen
     object Calibrate : Screen
+    object RoiSelect : Screen
     object Analyzing : Screen
     object Result : Screen
     object History : Screen
@@ -124,7 +126,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** 启动分析（AI 自动标定场地 + YOLO11 真实检测，分模块实时进度）；manualCourtCorners 非空时跳过自动检测直接用手动角点 */
-    fun startAnalysis(manualCourtCorners: List<PointF>? = null) {
+    fun startAnalysis(manualCourtCorners: List<PointF>? = null, roiPolygon: List<PointF>? = null) {
         val file = _videoFile.value ?: run {
             _error.value = AnalysisError("E000", "提示", "请先选择视频", "需要选择视频后开始测速")
             return
@@ -135,6 +137,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _courtResult.value = null
         _analysisStartMs.value = System.currentTimeMillis()
         _screen.value = Screen.Analyzing
+        // v2.17：ROI 优先用本次传入；未传入时读上次同机位保存的（固定机位只框一次）
+        val roi = roiPolygon ?: loadRoi()
 
         analyzeJob = viewModelScope.launch {
             try {
@@ -149,7 +153,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         _previewFrame.value = bmp
                     },
                     manualCourtCorners = manualCourtCorners,
-                    onCourt = { c -> _courtResult.value = c }
+                    onCourt = { c -> _courtResult.value = c },
+                    roiPolygon = roi
                 )
                 _result.value = result
 
@@ -204,6 +209,39 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     fun retryWithManualCalibration() {
         _error.value = null
         _screen.value = Screen.Calibrate
+    }
+
+    /** v2.17：E101 弹窗"ROI 框选"按钮 → 进入多边形框选（B误检修复：把邻场线/广告拦在本场外） */
+    fun retryWithRoiSelect() {
+        _error.value = null
+        _screen.value = Screen.RoiSelect
+    }
+
+    /** ROI 多边形完成后：持久化 + 直接带 ROI 重新分析 */
+    fun submitRoi(roi: List<PointF>) {
+        saveRoi(roi)
+        _screen.value = Screen.Analyzing
+        startAnalysis(roiPolygon = roi)
+    }
+
+    private fun loadRoi(): List<PointF>? {
+        return try {
+            val raw = context.getSharedPreferences("roi", Context.MODE_PRIVATE).getString("poly", null) ?: return null
+            val arr = raw.split(";").filter { it.isNotBlank() }.map {
+                val xy = it.split(",")
+                PointF(xy[0].toFloat(), xy[1].toFloat())
+            }
+            if (arr.size >= 3) arr else null
+        } catch (e: Exception) { null }
+    }
+
+    private fun saveRoi(roi: List<PointF>) {
+        try {
+            val raw = roi.joinToString(";") { "${it.x},${it.y}" }
+            context.getSharedPreferences("roi", Context.MODE_PRIVATE).edit().putString("poly", raw).apply()
+        } catch (e: Exception) {
+            // 持久化失败不影响本次分析
+        }
     }
 
     /** v2.16：手动标定确认后，把 4 角映射成 12 个场地交点，导出成训练 json。

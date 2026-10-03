@@ -1,6 +1,9 @@
 package com.badmintonspeed.app.analysis
 
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.PointF
 import kotlin.math.PI
 import kotlin.math.abs
@@ -72,13 +75,17 @@ object CourtAutoCalibrator {
     private val paramsB = Params(0.05, 20.0, 0.03, 12.0, 0.03, 0.08, 1)
     private val paramsC = Params(0.04, 30.0, 0.02, 14.0, 0.02, 0.05, 1)
 
-    /** 依次返回 左上、右上、右下、左下 四个角点（原图像素坐标），失败返回 null */
-    fun calibrate(frame: Bitmap): List<PointF>? {
+    /** 依次返回 左上、右上、右下、左下 四个角点（原图像素坐标），失败返回 null。
+     *  @param roi 用户框选的目标场地凸多边形（原图坐标，≥4点），非空时所有候选线段/关键点
+     *             先做掩码拦截——落在多边形外的线直接丢弃（B误检 100% 修复：邻场线/广告/地板缝） */
+    fun calibrate(frame: Bitmap, roi: List<PointF>? = null): List<PointF>? {
         val srcW = frame.width
         val srcH = frame.height
         val scale = min(1f, WORK_MAX_SIDE.toFloat() / max(srcW, srcH))
         val W = (srcW * scale).roundToInt().coerceAtLeast(1)
         val H = (srcH * scale).roundToInt().coerceAtLeast(1)
+        // ROI 掩码（多边形外全部拦截）
+        val roiMask = if (roi != null && roi.size >= 3) polygonMask(W, H, roi, scale) else null
 
         // v2.15 相机去畸变（直线自标定）：桶形畸变会把白线拍弯，Hough/直线假设全部失效。
         // 无标定板时用"场景长直线最直化"估算径向系数 k1，先校正再检测。
@@ -127,12 +134,12 @@ object CourtAutoCalibrator {
         // 方案A：多阈值白线 + Sobel（正常参数）
         val otsuT = otsu(gray).coerceIn(100, 230) // 下限从150降到100，暗场馆不丢线
         val masksA = listOf(
-            whiteMask(gray, sat, otsuT),
-            whiteMask(gray, sat, 130), // 170 → 130
-            whiteMask(gray, sat, 100), // 新增更低阈值兜底
-            sobelMask(gray, W, H, 160)
+            applyRoi(whiteMask(gray, sat, otsuT), roiMask),
+            applyRoi(whiteMask(gray, sat, 130), roiMask), // 170 → 130
+            applyRoi(whiteMask(gray, sat, 100), roiMask), // 新增更低阈值兜底
+            applyRoi(sobelMask(gray, W, H, 160), roiMask)
         )
-        var corners = runPipelines(masksA, W, H, paramsA)
+        var corners = runPipelines(masksA, W, H, paramsA, roiMask)
         if (corners != null) {
             val scaled = scaleCorners(corners, scale)
             val v = GeometricVerifier.verify(scaled, srcW, srcH)
@@ -141,8 +148,8 @@ object CourtAutoCalibrator {
         }
 
         // 方案B：低阈值 Sobel 边缘 + 宽松聚类
-        val masksB = listOf(sobelMask(gray, W, H, 100))
-        corners = runPipelines(masksB, W, H, paramsB)
+        val masksB = listOf(applyRoi(sobelMask(gray, W, H, 100), roiMask))
+        corners = runPipelines(masksB, W, H, paramsB, roiMask)
         if (corners != null) {
             val scaled = scaleCorners(corners, scale)
             val v = GeometricVerifier.verify(scaled, srcW, srcH)
@@ -151,8 +158,8 @@ object CourtAutoCalibrator {
         }
 
         // 方案C：超低阈值边缘 + 最宽松参数（最后防线）
-        val masksC = listOf(sobelMask(gray, W, H, 60))
-        corners = runPipelines(masksC, W, H, paramsC)
+        val masksC = listOf(applyRoi(sobelMask(gray, W, H, 60), roiMask))
+        corners = runPipelines(masksC, W, H, paramsC, roiMask)
         if (corners != null) {
             val scaled = scaleCorners(corners, scale)
             val v = GeometricVerifier.verify(scaled, srcW, srcH)
@@ -276,15 +283,56 @@ object CourtAutoCalibrator {
         return corners.map { PointF(it.x * inv, it.y * inv) }
     }
 
-    private fun runPipelines(masks: List<BooleanArray>, W: Int, H: Int, params: Params): List<PointF>? {
+    private fun runPipelines(masks: List<BooleanArray>, W: Int, H: Int, params: Params, roiMask: BooleanArray? = null): List<PointF>? {
         for (mask in masks) {
-            val r = calibrateWithMask(mask, W, H, params)
+            val r = calibrateWithMask(mask, W, H, params, roiMask)
             if (r != null) return r
         }
         return null
     }
 
     /** 白线掩码：亮度达标且低饱和（饱和度上限放宽到 90） */
+    /** 掩码位与：ROI 多边形外的像素全部清零 */
+    private fun applyRoi(mask: BooleanArray, roiMask: BooleanArray?): BooleanArray {
+        if (roiMask == null) return mask
+        for (i in mask.indices) {
+            if (!roiMask[i]) mask[i] = false
+        }
+        return mask
+    }
+
+    /** 凸/凹多边形 → 二值掩码（Canvas Path 填充，外黑内白） */
+    private fun polygonMask(W: Int, H: Int, roiPx: List<PointF>, scale: Float): BooleanArray {
+        val bmp = Bitmap.createBitmap(W, H, Bitmap.Config.ARGB_8888)
+        try {
+            val canvas = Canvas(bmp)
+            val paint = Paint().apply {
+                color = 0xFFFFFFFF.toInt()
+                style = Paint.Style.FILL
+                isAntiAlias = true
+            }
+            val path = Path()
+            val p0 = roiPx[0]
+            path.moveTo(p0.x * scale, p0.y * scale)
+            for (i in 1 until roiPx.size) {
+                val p = roiPx[i]
+                path.lineTo(p.x * scale, p.y * scale)
+            }
+            path.close()
+            canvas.drawPath(path, paint)
+            val px = IntArray(W * H)
+            bmp.getPixels(px, 0, W, 0, 0, W, H)
+            val mask = BooleanArray(W * H)
+            for (i in px.indices) {
+                // 黑色填充：alpha 高位的非零 = 多边形内
+                mask[i] = (px[i] ushr 24) > 0x7F
+            }
+            return mask
+        } finally {
+            bmp.recycle()
+        }
+    }
+
     private fun whiteMask(gray: IntArray, sat: IntArray, threshold: Int): BooleanArray {
         val mask = BooleanArray(gray.size)
         for (i in gray.indices) {
@@ -313,7 +361,7 @@ object CourtAutoCalibrator {
     }
 
     /** 在给定掩码上执行：形态学闭 -> 霍夫 -> 方向组枚举 -> 四边形评分；失败时"部分线+羽毛球先验"构造 */
-    private fun calibrateWithMask(maskIn: BooleanArray, W: Int, H: Int, params: Params): List<PointF>? {
+    private fun calibrateWithMask(maskIn: BooleanArray, W: Int, H: Int, params: Params, roiMask: BooleanArray? = null): List<PointF>? {
         // ---- 形态学闭：膨胀 + 腐蚀（3x3 十字）----
         val closed = BooleanArray(W * H)
         val dil = BooleanArray(W * H)
@@ -446,13 +494,19 @@ object CourtAutoCalibrator {
                 val maxSide = sides.max() ?: continue
                 if (maxSide / minSide > params.sideMax) continue
                 val fit = lineFitScore(closed, W, H, corners)
-                val score = fit * (0.6 + 0.4 * areaRatio.coerceAtMost(1.0))
+                // v2.17 置信度排序：几何验证不过的候选直接丢弃；过则按
+                // 线贴合(IoU) + 几何一致性 + ROI 交集占比 加权选最优
+                val gv = GeometricVerifier.verify(corners, W, H)
+                if (!gv.ok) continue
+                val geoScore = gv.score
+                val roiOverlap = if (roiMask != null) quadRoiOverlap(corners, roiMask, W, H) else 1.0
+                val score = fit * 0.5 + geoScore * 0.25 + roiOverlap * 0.25
                 candidatesQ.add(Candidate(corners, score, area))
             }
         }
-        if (candidatesQ.isEmpty()) return partialConstruct(maskIn, W, H, groups, params)
+        if (candidatesQ.isEmpty()) return partialConstruct(maskIn, W, H, groups, params, roiMask)
         val best = candidatesQ.maxBy { it.score }
-        if (best.score < params.scoreMin) return partialConstruct(maskIn, W, H, groups, params)
+        if (best.score < params.scoreMin) return partialConstruct(maskIn, W, H, groups, params, roiMask)
         return best.corners
     }
 
@@ -464,7 +518,8 @@ object CourtAutoCalibrator {
      * 构造出完整羽毛球场地覆盖在画面上——不要求四条边都可见。
      */
     private fun partialConstruct(
-        maskIn: BooleanArray, W: Int, H: Int, groups: List<DirGroup>, params: Params
+        maskIn: BooleanArray, W: Int, H: Int, groups: List<DirGroup>, params: Params,
+        roiMask: BooleanArray? = null
     ): List<PointF>? {
         if (groups.size < 2) return null
         // 主组：平行线最多的一组（边线）
@@ -637,6 +692,21 @@ object CourtAutoCalibrator {
      * 白线贴合度：沿四边形四边均匀采样，统计采样点附近是否有掩码线像素。
      * 得分 0-1，越高说明检测框越贴合实际场地线。画面外采样点跳过（不计分）。
      */
+    /** 候选四边形与 ROI 掩码的交集占比：5 点采样（4 角 + 中心）落在多边形内的比例 */
+    private fun quadRoiOverlap(corners: List<PointF>, roiMask: BooleanArray, W: Int, H: Int): Double {
+        if (corners.size != 4) return 0.0
+        val cx = (corners[0].x + corners[1].x + corners[2].x + corners[3].x) / 4f
+        val cy = (corners[0].y + corners[1].y + corners[2].y + corners[3].y) / 4f
+        val samples = listOf(corners[0], corners[1], corners[2], corners[3], PointF(cx, cy))
+        var hit = 0
+        for (p in samples) {
+            val px = p.x.toInt().coerceIn(0, W - 1)
+            val py = p.y.toInt().coerceIn(0, H - 1)
+            if (roiMask[py * W + px]) hit++
+        }
+        return hit / 5.0
+    }
+
     private fun lineFitScore(mask: BooleanArray, W: Int, H: Int, corners: List<PointF>): Double {
         val fits = edgeFitScores(mask, W, H, corners)
         if (fits.isEmpty()) return 0.0

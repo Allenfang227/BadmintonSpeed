@@ -1,6 +1,9 @@
 package com.badmintonspeed.app.analysis
 
 import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.Path
 import android.graphics.PointF
 import kotlin.math.abs
 import kotlin.math.hypot
@@ -25,8 +28,9 @@ object CourtRegressor {
 
     private const val WORK_MAX_SIDE = 720
 
-    /** 依次返回 左上、右上、右下、左下 四个角点（原图像素坐标），失败返回 null */
-    fun regress(frame: Bitmap): List<PointF>? {
+    /** 依次返回 左上、右上、右下、左下 四个角点（原图像素坐标），失败返回 null。
+     *  @param roi 目标场地多边形（原图坐标），非空时白线掩码先做 ROI 拦截（B误检修复） */
+    fun regress(frame: Bitmap, roi: List<PointF>? = null): List<PointF>? {
         val srcW = frame.width
         val srcH = frame.height
         val scale = min(1f, WORK_MAX_SIDE.toFloat() / max(srcW, srcH))
@@ -52,6 +56,13 @@ object CourtRegressor {
         val white = BooleanArray(W * H)
         for (i in gray.indices) {
             white[i] = gray[i] > 120 && sat[i] < 70
+        }
+        // ROI 拦截：多边形外的白点全部剔除（邻场线/广告字/地板缝）
+        if (roi != null && roi.size >= 3) {
+            val roiMask = polygonMask(W, H, roi, scale)
+            for (i in white.indices) {
+                if (!roiMask[i]) white[i] = false
+            }
         }
 
         // ---- 2. 行/列扫描出线段点集 ----
@@ -157,6 +168,37 @@ object CourtRegressor {
         val corners = template.map { Homography.courtToImage(bestH!!, it.x, it.y) }
         val scaled = corners.map { PointF(it.x / scale, it.y / scale) }
         return scaled
+    }
+
+    /** 多边形 → 掩码（白色=多边形内） */
+    private fun polygonMask(W: Int, H: Int, roiPx: List<PointF>, scale: Float): BooleanArray {
+        val bmp = Bitmap.createBitmap(W, H, Bitmap.Config.ARGB_8888)
+        try {
+            val canvas = Canvas(bmp)
+            val paint = Paint().apply {
+                color = 0xFFFFFFFF.toInt()
+                style = Paint.Style.FILL
+                isAntiAlias = true
+            }
+            val path = Path()
+            val p0 = roiPx[0]
+            path.moveTo(p0.x * scale, p0.y * scale)
+            for (i in 1 until roiPx.size) {
+                val p = roiPx[i]
+                path.lineTo(p.x * scale, p.y * scale)
+            }
+            path.close()
+            canvas.drawPath(path, paint)
+            val px = IntArray(W * H)
+            bmp.getPixels(px, 0, W, 0, 0, W, H)
+            val mask = BooleanArray(W * H)
+            for (i in px.indices) {
+                mask[i] = (px[i] ushr 24) > 0x7F
+            }
+            return mask
+        } finally {
+            bmp.recycle()
+        }
     }
 
     /** 从点集 RANSAC 拟合最多 maxLines 条直线（横向点/纵向点分别调用） */

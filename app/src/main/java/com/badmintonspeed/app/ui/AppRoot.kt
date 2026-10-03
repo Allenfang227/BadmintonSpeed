@@ -229,7 +229,8 @@ private fun NavRow(label: String, selected: Boolean, onClick: () -> Unit, danger
 private fun ErrorDialog(
     error: com.badmintonspeed.app.domain.AnalysisError,
     onDismiss: () -> Unit,
-    onManualCalibrate: (() -> Unit)? = null
+    onManualCalibrate: (() -> Unit)? = null,
+    onRoiSelect: (() -> Unit)? = null
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -243,8 +244,9 @@ private fun ErrorDialog(
         },
         confirmButton = {
             TextButton(onClick = onDismiss) { Text("知道了") }
-            if (error.suggestManual && onManualCalibrate != null) {
-                TextButton(onClick = onManualCalibrate) { Text("手动标定", color = Error) }
+            if (error.suggestManual) {
+                TextButton(onClick = { onManualCalibrate?.invoke() }) { Text("手动标定", color = Error) }
+                TextButton(onClick = { onRoiSelect?.invoke() }) { Text("ROI框选", color = Color(0xFF4FC3F7)) }
             }
         }
     )
