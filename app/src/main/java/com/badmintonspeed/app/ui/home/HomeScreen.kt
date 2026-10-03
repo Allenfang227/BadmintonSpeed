@@ -2,6 +2,7 @@ package com.badmintonspeed.app.ui.home
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,15 +30,20 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.badmintonspeed.app.domain.AnalysisRecord
 import com.badmintonspeed.app.ui.MainViewModel
-import com.badmintonspeed.app.ui.components.liveShadow
-import com.badmintonspeed.app.ui.theme.DividerColor
-import com.badmintonspeed.app.ui.theme.OnSurfaceVariant
 import com.badmintonspeed.app.ui.theme.Primary
-import com.badmintonspeed.app.ui.theme.SurfaceVariant
+
+/** 白色首页配色（v2.22：首页改白，浅色卡） */
+private val WhiteBg = Color(0xFFFFFFFF)
+private val CardBg = Color(0xFFF2F7F4)
+private val CardBorder = Color(0xFFDCE7E1)
+private val TitleDark = Color(0xFF10231A)
+private val DescGray = Color(0xFF5E7267)
+private val IconTile = Color(0xFFE7F0EA)
+private val DividerLight = Color(0xFFE3EBE6)
 
 /**
- * 主页（v2.21 回退图1 原版）：居中标题 + 深色大卡，全宽胶囊按钮；
- * 卡片/按钮均带陀螺仪裸眼 3D 动态阴影。
+ * 主页（v2.22 白色版）：居中标题 + 浅色大卡，全宽胶囊按钮；
+ * 无任何沉浸观感，纯平面白色风格。
  */
 @Composable
 fun HomeScreen(
@@ -47,31 +53,28 @@ fun HomeScreen(
     records: List<AnalysisRecord>
 ) {
     Column(
-        Modifier.fillMaxSize().padding(horizontal = 48.dp, vertical = 30.dp),
+        Modifier.fillMaxSize().background(WhiteBg).padding(horizontal = 48.dp, vertical = 30.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Spacer(Modifier.height(6.dp))
-        // 居中标题
         Text(
             "选择测速模式",
-            color = Color.White,
+            color = TitleDark,
             fontSize = 32.sp,
             fontWeight = FontWeight.Bold
         )
         Spacer(Modifier.height(8.dp))
-        // 副标题：左右横线装饰
         Row(verticalAlignment = Alignment.CenterVertically) {
-            Box(Modifier.width(60.dp).height(1.dp).background(DividerColor))
+            Box(Modifier.width(60.dp).height(1.dp).background(DividerLight))
             Text(
                 "  Select Speed Test Mode  ",
-                color = OnSurfaceVariant,
+                color = DescGray,
                 fontSize = 15.sp
             )
-            Box(Modifier.width(60.dp).height(1.dp).background(DividerColor))
+            Box(Modifier.width(60.dp).height(1.dp).background(DividerLight))
         }
         Spacer(Modifier.height(28.dp))
 
-        // 三张模式大卡（横屏等宽，占满主体高度）
         Row(Modifier.fillMaxWidth().weight(1f)) {
             ModeCard(
                 modifier = Modifier.weight(1f).fillMaxHeight().padding(end = 12.dp),
@@ -103,26 +106,25 @@ fun HomeScreen(
         }
 
         Spacer(Modifier.height(20.dp))
-        // 底部统计条
         val best = records.maxOfOrNull { it.maxSpeedKmh } ?: 0f
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text("累计测速", color = OnSurfaceVariant, fontSize = 14.sp)
-            Text(" ${records.size} 次", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            Text("累计测速", color = DescGray, fontSize = 14.sp)
+            Text(" ${records.size} 次", color = TitleDark, fontSize = 16.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.width(32.dp))
-            Text("最高球速", color = OnSurfaceVariant, fontSize = 14.sp)
+            Text("最高球速", color = DescGray, fontSize = 14.sp)
             Text(
                 if (best > 0) " ${"%.0f".format(best)} km/h" else " --",
-                color = if (best > 0) Color(0xFFFFD60A) else Color.White,
+                color = if (best > 0) Color(0xFFCA8A04) else TitleDark,
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Bold
             )
         }
         Spacer(Modifier.height(8.dp))
-        Box(Modifier.fillMaxWidth().height(1.dp).background(DividerColor))
+        Box(Modifier.fillMaxWidth().height(1.dp).background(DividerLight))
     }
 }
 
-/** 深色模式大卡（图1）：黑色圆角图标方块 + 标题描述 + 底部全宽胶囊按钮 */
+/** 浅色模式大卡：白底浅灰卡 + 描边 + 浅色图标方块 + 底部全宽胶囊按钮 */
 @Composable
 private fun ModeCard(
     modifier: Modifier,
@@ -135,9 +137,9 @@ private fun ModeCard(
 ) {
     Box(
         modifier
-            .liveShadow(cornerRadius = 20.dp, strengthDp = 10.dp, alpha = 0.4f)
             .clip(RoundedCornerShape(20.dp))
-            .background(SurfaceVariant)
+            .background(CardBg)
+            .border(1.dp, CardBorder, RoundedCornerShape(20.dp))
     ) {
         Column(
             Modifier.fillMaxSize().padding(24.dp),
@@ -146,28 +148,26 @@ private fun ModeCard(
             Box(
                 Modifier
                     .size(66.dp)
-                    .background(Color(0xFF0A0F0C), RoundedCornerShape(16.dp)),
+                    .background(IconTile, RoundedCornerShape(16.dp)),
                 contentAlignment = Alignment.Center
             ) { icon() }
             Spacer(Modifier.height(18.dp))
-            Text(title, color = Color.White, fontSize = 21.sp, fontWeight = FontWeight.Bold)
+            Text(title, color = TitleDark, fontSize = 21.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.height(10.dp))
             Text(
                 desc,
-                color = OnSurfaceVariant,
+                color = DescGray,
                 fontSize = 13.sp,
                 lineHeight = 20.sp,
                 textAlign = TextAlign.Center
             )
             Spacer(Modifier.weight(1f))
-            // 全宽胶囊按钮：可进入=亮绿黑字；开发中=深绿白字
             Box(
                 Modifier
                     .fillMaxWidth()
                     .height(46.dp)
-                    .liveShadow(cornerRadius = 23.dp, strengthDp = 6.dp, alpha = 0.4f)
                     .clip(RoundedCornerShape(23.dp))
-                    .background(if (active) Primary else Color(0xFF15803D))
+                    .background(if (active) Primary else Color(0xFF9FB8AA))
                     .clickable(enabled = active, onClick = onClick),
                 contentAlignment = Alignment.Center
             ) {
@@ -185,7 +185,7 @@ private fun ModeCard(
 @Composable
 private fun TrainIcon() {
     Canvas(Modifier.size(36.dp)) {
-        val c = Color(0xFF4FC3F7)
+        val c = Color(0xFF0E9BDB)
         drawCircle(
             color = c, radius = size.minDimension / 2.2f,
             style = androidx.compose.ui.graphics.drawscope.Stroke(width = 4f)

@@ -60,7 +60,6 @@ import com.badmintonspeed.app.domain.HitAnalysis
 import com.badmintonspeed.app.ui.MainViewModel
 import com.badmintonspeed.app.ui.components.CourtOverlay
 import com.badmintonspeed.app.ui.components.PoseOverlay
-import com.badmintonspeed.app.ui.components.liveShadow
 import com.badmintonspeed.app.ui.theme.OnSurfaceVariant
 import com.badmintonspeed.app.ui.theme.Primary
 import com.badmintonspeed.app.ui.theme.Surface
@@ -365,8 +364,7 @@ private fun ControlButton(label: String, highlight: Boolean = false, onClick: ()
     Surface(
         shape = RoundedCornerShape(10.dp),
         color = if (highlight) Color(0x334ADE80) else Color(0xFF15241D),
-        modifier = Modifier.liveShadow(cornerRadius = 10.dp, strengthDp = 4.dp, alpha = 0.4f)
-            .clickable(onClick = onClick)
+        modifier = Modifier            .clickable(onClick = onClick)
     ) {
         Text(
             label,

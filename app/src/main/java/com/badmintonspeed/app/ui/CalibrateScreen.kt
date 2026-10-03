@@ -38,7 +38,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlin.math.min
-import com.badmintonspeed.app.ui.components.liveShadow
 
 /**
  * 手动标定场地4个角点 v2（修复用户实测反馈）：
@@ -176,32 +175,28 @@ fun CalibrateScreen(vm: MainViewModel = viewModel()) {
                 colors = ButtonDefaults.buttonColors(
                     containerColor = Color(0xFF263238), contentColor = Color(0xFFB0BEC5)
                 ),
-                modifier = Modifier.weight(1f).liveShadow(cornerRadius = 12.dp, strengthDp = 4.dp, alpha = 0.35f)
-            ) { Text("重置视图", fontSize = 13.sp) }
+                modifier = Modifier.weight(1f)            ) { Text("重置视图", fontSize = 13.sp) }
             Button(
                 onClick = { if (points.isNotEmpty()) points.removeAt(points.size - 1) },
                 enabled = points.isNotEmpty(),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = Color(0xFF263238), contentColor = Color(0xFFB0BEC5)
                 ),
-                modifier = Modifier.weight(1f).liveShadow(cornerRadius = 12.dp, strengthDp = 4.dp, alpha = 0.35f)
-            ) { Text("撤销", fontSize = 13.sp) }
+                modifier = Modifier.weight(1f)            ) { Text("撤销", fontSize = 13.sp) }
             Button(
                 onClick = { points.clear() },
                 enabled = points.isNotEmpty(),
                 colors = ButtonDefaults.buttonColors(
                     containerColor = Color(0xFF263238), contentColor = Color(0xFFB0BEC5)
                 ),
-                modifier = Modifier.weight(1f).liveShadow(cornerRadius = 12.dp, strengthDp = 4.dp, alpha = 0.35f)
-            ) { Text("重标", fontSize = 13.sp) }
+                modifier = Modifier.weight(1f)            ) { Text("重标", fontSize = 13.sp) }
             Button(
                 onClick = { if (points.size == 4) vm.submitManualCourtCorners(points.toList()) },
                 enabled = points.size == 4,
                 colors = ButtonDefaults.buttonColors(
                     containerColor = Color(0xFF00E676), contentColor = Color.Black
                 ),
-                modifier = Modifier.weight(1.6f).liveShadow(cornerRadius = 12.dp, strengthDp = 5.dp, alpha = 0.45f)
-            ) { Text(if (points.size == 4) "确认（AI精修）" else "已选 ${points.size}/4", fontSize = 13.sp) }
+                modifier = Modifier.weight(1.6f)            ) { Text(if (points.size == 4) "确认（AI精修）" else "已选 ${points.size}/4", fontSize = 13.sp) }
         }
         Spacer(modifier = Modifier.height(6.dp))
         Button(
@@ -209,7 +204,6 @@ fun CalibrateScreen(vm: MainViewModel = viewModel()) {
             colors = ButtonDefaults.buttonColors(
                 containerColor = Color.Transparent, contentColor = Color(0xFF78909C)
             ),
-            modifier = Modifier.fillMaxWidth().liveShadow(cornerRadius = 12.dp, strengthDp = 4.dp, alpha = 0.3f)
-        ) { Text("取消", fontSize = 13.sp) }
+            modifier = Modifier.fillMaxWidth()        ) { Text("取消", fontSize = 13.sp) }
     }
 }

@@ -29,7 +29,6 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.badmintonspeed.app.ui.components.liveShadow
 
 /**
  * v2.17 ROI 框选屏：在首帧上画凸多边形（≥4 点）框住目标场地。
@@ -45,7 +44,7 @@ fun RoiSelectScreen(
     val bmp = frame ?: run {
         Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
             Text("没有可用画面帧，请返回重试", Modifier.padding(24.dp))
-            Button(onClick = onBack, modifier = Modifier.liveShadow(cornerRadius = 10.dp, strengthDp = 4.dp, alpha = 0.35f)) { Text("返回") }
+            Button(onClick = onBack, modifier = Modifier) { Text("返回") }
         }
         return
     }
@@ -126,7 +125,7 @@ fun RoiSelectScreen(
             Text("已选 ${points.size} 点（≥4 点闭合，单点加点，底部按钮撤销）", Modifier.weight(1f), fontSize = 13.sp,
                 color = Color(0xFFB0BEC5))
             if (points.isNotEmpty()) {
-                Button(onClick = { points.removeAt(points.size - 1) }, Modifier.padding(end = 8.dp).liveShadow(cornerRadius = 10.dp, strengthDp = 4.dp, alpha = 0.35f)) { Text("撤销") }
+                Button(onClick = { points.removeAt(points.size - 1) }, Modifier.padding(end = 8.dp)) { Text("撤销") }
             }
             Button(
                 onClick = { if (points.size >= 4) onSubmit(points.toList()) },
@@ -137,6 +136,6 @@ fun RoiSelectScreen(
             }
         }
         // 顶部返回
-        Button(onClick = onBack, Modifier.align(Alignment.TopStart).padding(12.dp).liveShadow(cornerRadius = 10.dp, strengthDp = 4.dp, alpha = 0.35f)) { Text("返回") }
+        Button(onClick = onBack, Modifier.align(Alignment.TopStart).padding(12.dp)) { Text("返回") }
     }
 }
