@@ -169,6 +169,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 throw ce
             } catch (e: VideoAnalyzer.AnalysisException) {
                 if (!cancelFlag.get()) {
+                    // v2.15：E101 建议手动标定兜底时，保留当前预览帧作为标定底图
+                    if (e.error.suggestManual && _previewFrame.value != null) {
+                        _calibrationFrame.value = _previewFrame.value
+                    }
                     _error.value = e.error
                     _screen.value = Screen.Home
                 }
@@ -194,6 +198,12 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** 用户手动标定完4个角点后，用这些角点继续分析（跳过自动场地检测） */
+    /** v2.15：E101 弹窗"手动标定"按钮 → 进入四角拖拽标定（AI 优先 + 人工兜底） */
+    fun retryWithManualCalibration() {
+        _error.value = null
+        _screen.value = Screen.Calibrate
+    }
+
     fun submitManualCourtCorners(corners: List<PointF>) {
         _calibrationFrame.value = null
         _screen.value = Screen.Analyzing

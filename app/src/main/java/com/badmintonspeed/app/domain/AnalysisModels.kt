@@ -164,7 +164,8 @@ data class AnalysisError(
     val code: String,
     val title: String,
     val detail: String,
-    val threshold: String // 判定阈值/输出说明
+    val threshold: String, // 判定阈值/输出说明
+    val suggestManual: Boolean = false // v2.15：E101 时建议进入手动标定兜底（AI优先+人工引导）
 ) {
     val display: String
         get() = "[$code] $title\n$detail\n（判定阈值：$threshold）"

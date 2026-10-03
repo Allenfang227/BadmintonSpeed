@@ -102,7 +102,7 @@ fun AppRoot(vm: MainViewModel = viewModel()) {
                 else -> {}
             }
         }
-        error?.let { ErrorDialog(it, vm::dismissError) }
+        error?.let { ErrorDialog(it, vm::dismissError, vm::retryWithManualCalibration) }
         return
     }
 
@@ -165,7 +165,7 @@ fun AppRoot(vm: MainViewModel = viewModel()) {
         }
     }
 
-    error?.let { ErrorDialog(it, vm::dismissError) }
+    error?.let { ErrorDialog(it, vm::dismissError, vm::retryWithManualCalibration) }
 
     if (showExitDialog) {
         AlertDialog(
@@ -226,7 +226,11 @@ private fun NavRow(label: String, selected: Boolean, onClick: () -> Unit, danger
 }
 
 @Composable
-private fun ErrorDialog(error: com.badmintonspeed.app.domain.AnalysisError, onDismiss: () -> Unit) {
+private fun ErrorDialog(
+    error: com.badmintonspeed.app.domain.AnalysisError,
+    onDismiss: () -> Unit,
+    onManualCalibrate: (() -> Unit)? = null
+) {
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("提示  ${error.code}", color = Error) },
@@ -237,6 +241,11 @@ private fun ErrorDialog(error: com.badmintonspeed.app.domain.AnalysisError, onDi
                 lineHeight = 19.sp
             )
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text("知道了") } }
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("知道了") }
+            if (error.suggestManual && onManualCalibrate != null) {
+                TextButton(onClick = onManualCalibrate) { Text("手动标定", color = Error) }
+            }
+        }
     )
 }

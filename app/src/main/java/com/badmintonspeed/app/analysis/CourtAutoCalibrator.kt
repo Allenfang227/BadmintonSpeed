@@ -37,6 +37,19 @@ import kotlin.math.sqrt
  */
 object CourtAutoCalibrator {
 
+    /** 单帧标定诊断（供 E101 失败分类 A漏检/B误检/C拓扑错/D几何歪 统计占比） */
+    data class Diagnosis(
+        val whiteRatio: Float = 0f,   // 白线像素占帧面积比（<0.03 判漏检）
+        val foundQuad: Boolean = false, // 是否找到四边形（没找到判误检/漏检）
+        val geomOk: Boolean = false,    // 几何五项校验是否通过（形状歪判几何）
+        val regressOk: Boolean = false  // 关键点配准是否成功
+    )
+
+    /** 最近一次 calibrate 的诊断结果（线程安全，VideoAnalyzer 每次调用后读取） */
+    @Volatile
+    var lastDiagnosis = Diagnosis()
+
+
     private const val WORK_MAX_SIDE = 720
     private const val THETA_STEP_DEG = 2.0
     private const val WHITE_SAT_DIFF = 90 // 放宽到 90：发黄的场地线饱和度会略高
@@ -66,12 +79,34 @@ object CourtAutoCalibrator {
         val scale = min(1f, WORK_MAX_SIDE.toFloat() / max(srcW, srcH))
         val W = (srcW * scale).roundToInt().coerceAtLeast(1)
         val H = (srcH * scale).roundToInt().coerceAtLeast(1)
-        val bmp = if (scale < 1f) Bitmap.createScaledBitmap(frame, W, H, true) else frame
+
+        // v2.15 相机去畸变（直线自标定）：桶形畸变会把白线拍弯，Hough/直线假设全部失效。
+        // 无标定板时用"场景长直线最直化"估算径向系数 k1，先校正再检测。
+        val undistorted = try { DistortionEstimator.undistort(frame) } catch (e: Exception) { null }
+        val bmp = if (undistorted != null) {
+            if (scale < 1f) Bitmap.createScaledBitmap(undistorted, W, H, true)
+            else undistorted
+        } else {
+            if (scale < 1f) Bitmap.createScaledBitmap(frame, W, H, true) else frame
+        }
 
         // v2.14 背景色验证降级为"参考"（不再硬性拒绝）：
         // 用户实测 v2.13 因地板色验证太严导致 E101——实际场馆地板可能是
         // 灰色/暗色/反光，或画面被墙面观众席占据。白线四边形本身清晰即可标定。
         val floorOk = verifyCourtFloorColor(bmp, W, H)
+
+        // v2.15 诊断：白色像素占比（漏检/误检分类依据）
+        var whitePx = 0
+        for (i in 0 until W * H step 7) {
+            val p = bmp.getPixel(i % W, i / W)
+            val r = p shr 16 and 0xFF
+            val g = p shr 8 and 0xFF
+            val b = p and 0xFF
+            val mx = max(r, max(g, b)); val mn = min(r, min(g, b))
+            if (mx > 150 && mx - mn < 60) whitePx++
+        }
+        val sampled = (W * H + 6) / 7
+        val whiteRatio = whitePx.toFloat() / sampled
 
         // ---- 1) 灰度 + 饱和度 ----
         val pixels = IntArray(W * H)
@@ -98,18 +133,50 @@ object CourtAutoCalibrator {
             sobelMask(gray, W, H, 160)
         )
         var corners = runPipelines(masksA, W, H, paramsA)
-        if (corners != null) return scaleCorners(corners, scale) // floorOk 仅辅助参考，不阻塞
+        if (corners != null) {
+            val scaled = scaleCorners(corners, scale)
+            val v = GeometricVerifier.verify(scaled, srcW, srcH)
+            lastDiagnosis = Diagnosis(whiteRatio, true, v.ok, false)
+            if (v.ok) return scaled
+        }
 
         // 方案B：低阈值 Sobel 边缘 + 宽松聚类
         val masksB = listOf(sobelMask(gray, W, H, 100))
         corners = runPipelines(masksB, W, H, paramsB)
-        if (corners != null) return scaleCorners(corners, scale)
+        if (corners != null) {
+            val scaled = scaleCorners(corners, scale)
+            val v = GeometricVerifier.verify(scaled, srcW, srcH)
+            lastDiagnosis = Diagnosis(whiteRatio, true, v.ok, false)
+            if (v.ok) return scaled
+        }
 
         // 方案C：超低阈值边缘 + 最宽松参数（最后防线）
         val masksC = listOf(sobelMask(gray, W, H, 60))
         corners = runPipelines(masksC, W, H, paramsC)
-        if (corners != null) return scaleCorners(corners, scale)
+        if (corners != null) {
+            val scaled = scaleCorners(corners, scale)
+            val v = GeometricVerifier.verify(scaled, srcW, srcH)
+            lastDiagnosis = Diagnosis(whiteRatio, true, v.ok, false)
+            if (v.ok) return scaled
+        }
 
+        // v2.15 关键点配准通道（采纳建议："回归关键点 + 套用刚性模板"）：
+        // 白线扫描 -> 线交点（关键点）-> RANSAC 拟合 BWF 模板 -> 反投影 4 角。
+        // 即使 ABC 线检测失败、只扫到 4~5 个交点也能拟合出场地。
+        val regressed = try { CourtRegressor.regress(bmp) } catch (e: Exception) { null }
+        if (regressed != null) {
+            val v = GeometricVerifier.verify(regressed, srcW, srcH)
+            lastDiagnosis = Diagnosis(whiteRatio, true, v.ok, v.ok)
+            if (v.ok) return regressed
+        }
+
+        // 全部通道失败/校验不过：返回 ABC 的最优结果由上层多帧投票兜底（不在这里硬判）
+        if (corners != null) {
+            val scaled = scaleCorners(corners, scale)
+            lastDiagnosis = Diagnosis(whiteRatio, true, false, false)
+            return scaled
+        }
+        lastDiagnosis = Diagnosis(whiteRatio, false, false, false)
         return null
     }
 

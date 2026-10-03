@@ -93,6 +93,29 @@ object Homography {
         return PointF(cx, cy)
     }
 
+    /** 将场地坐标（米）转换为像素坐标（单应性逆变换，供模板反投影） */
+    fun courtToImage(h: FloatArray, x: Float, y: Float): PointF {
+        // 手动求 3x3 逆矩阵
+        val a = h[0]; val b = h[1]; val c = h[2]
+        val d = h[3]; val e = h[4]; val f = h[5]
+        val g = h[6]; val i = h[7]; val j = h[8]
+        val det = a * (e * j - f * i) - b * (d * j - f * g) + c * (d * i - e * g)
+        if (abs(det) < 1e-9f) return PointF(x, y)
+        val invDet = 1.0f / det
+        val ia = (e * j - f * i) * invDet
+        val ib = (c * i - b * j) * invDet
+        val ic = (b * f - c * e) * invDet
+        val id = (f * g - d * j) * invDet
+        val ie = (a * j - c * g) * invDet
+        val iff = (c * d - a * f) * invDet
+        val ig = (d * i - e * g) * invDet
+        val ih = (b * g - a * i) * invDet
+        val ij = (a * e - b * d) * invDet
+        val w = ig * x + ih * y + ij
+        if (abs(w) < 1e-9f) return PointF(x, y)
+        return PointF((ia * x + ib * y + ic) / w, (id * x + ie * y + iff) / w)
+    }
+
     private fun identity(): FloatArray = floatArrayOf(
         1f, 0f, 0f,
         0f, 1f, 0f,

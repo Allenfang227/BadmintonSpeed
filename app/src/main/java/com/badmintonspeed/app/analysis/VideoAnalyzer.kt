@@ -199,6 +199,9 @@ class VideoAnalyzer {
         var anchorFrame = framesAll.first().bitmap
         val candidates = ArrayList<List<PointF>>()
         val sampleList = courtSamples.toList()
+        // v2.15 E101 失败分类统计（A漏检/B误检/C拓扑错/D几何歪）：
+        // 用户要求"每一类占比 + 判断主因"，先积累采样帧的诊断信号再给出占比
+        val diagCount = IntArray(4) // [A漏检, B误检, C拓扑错, D几何歪]
         for ((idx, pi) in sampleList.withIndex()) {
             val probe = framesAll[pi.coerceIn(0, framesAll.size - 1)].bitmap
             val pct = 10f + 60f * ((idx + 1).toFloat() / sampleList.size)
@@ -207,6 +210,18 @@ class VideoAnalyzer {
                 CourtAutoCalibrator.calibrate(probe)
             } catch (e: Exception) {
                 null // 防闪退：单帧检测异常不中断整体流程
+            }
+            // v2.15 诊断分类：
+            //  A漏检：白线像素占比过低（线太淡/被遮挡/画面昏暗）
+            //  B误检：有白线但构不成四边形（邻场线/广告/接缝干扰）
+            //  C拓扑错：四边形有了但几何校验不过（连线关系错误）
+            //  D几何歪：几何校验过但长实线验证不过（畸变/反光/单应性病态）
+            val diag = CourtAutoCalibrator.lastDiagnosis
+            if (r == null) {
+                if (diag.whiteRatio < 0.03f) diagCount[0]++ else diagCount[1]++
+            } else {
+                if (!diag.geomOk) diagCount[2]++
+                else if (!CourtAutoCalibrator.verifyLongLines(probe, r)) diagCount[3]++
             }
             // 长实线验证：四边形每边要落在白色长实线上（用户："扫到绿色或蓝色或红色地上的长实线"）
             if (r != null && CourtAutoCalibrator.verifyLongLines(probe, r)) {
@@ -251,12 +266,25 @@ class VideoAnalyzer {
                 delay(150)
             } else {
                 // 全 AI 与历史先验均失败 → 直接 E101（用户要求去掉手工标注）
+                // v2.15 失败分类占比：A漏检/B误检/C拓扑错/D几何歪
+                val total = diagCount.sum().coerceAtLeast(1)
+                val names = listOf("A漏检", "B误检", "C拓扑错", "D几何歪")
+                val parts = diagCount.mapIndexed { i, c ->
+                    "${names[i]} ${c * 100 / total}%"
+                }.joinToString(" ")
+                val mainCause = when (diagCount.indices.maxByOrNull { diagCount[it] }) {
+                    0 -> "主因：线太淡/被遮挡（数据与预处理问题）"
+                    1 -> "主因：邻场线/广告/接缝误检（建议拍摄时只框住单个场地）"
+                    2 -> "主因：线连错关系（模板约束已介入仍失败，多为视角过斜）"
+                    else -> "主因：相机畸变或单应性求解病态（建议镜头更正、减少广角）"
+                }
                 throw AnalysisException(
                     AnalysisError(
                         code = "E101",
                         title = "场地检测失败",
-                        detail = "AI 未能从视频中识别出羽毛球场地（绿色/蓝色/红色地板上的白色长实线）。请确认：①视频画面里包含完整场地；②光线不要太暗；③摄像头固定不要摇晃。",
-                        threshold = "前/中/后帧段各10帧检测 + 背景色验证 + 长实线验证，均未通过"
+                        detail = "AI 未能从视频中识别出羽毛球场地。请确认：①视频画面里包含完整场地；②光线不要太暗；③摄像头固定不要摇晃。",
+                        threshold = "失败分类占比：$parts；$mainCause",
+                        suggestManual = true // v2.15：AI 优先 + 人工引导兜底（拖拽四角修正入口）
                     )
                 )
             }
@@ -546,7 +574,7 @@ class VideoAnalyzer {
             hits = hits,
             summary = summary,
             analysisDurationMs = System.currentTimeMillis() - startTime,
-            appVersion = "2.14.0",
+            appVersion = "2.15.0",
             frameWidth = w,
             frameHeight = h,
             frameAtMaxSpeed = frameAtMax,
