@@ -80,7 +80,7 @@ fun Modifier.liquidGlass(
     )
 }
 
-/** 液态玻璃卡片容器（替代普通 Card） */
+/** 液态玻璃卡片容器（替代普通 Card）——叠加陀螺仪动态阴影（裸眼 3D） */
 @Composable
 fun LiquidGlassCard(
     modifier: Modifier = Modifier,
@@ -89,6 +89,7 @@ fun LiquidGlassCard(
 ) {
     Box(
         modifier
+            .liveShadow(cornerRadius = cornerRadius, strengthDp = 11.dp)
             .clip(RoundedCornerShape(cornerRadius))
             .liquidGlass(cornerRadius = cornerRadius)
     ) {
@@ -116,6 +117,7 @@ fun LiquidGlassNavBar(
             Modifier
                 .fillMaxWidth()
                 .height(60.dp)
+                .liveShadow(cornerRadius = 30.dp, strengthDp = 10.dp)
                 .clip(RoundedCornerShape(30.dp))
                 .liquidGlass(cornerRadius = 30.dp)
                 .padding(horizontal = 8.dp, vertical = 9.dp),

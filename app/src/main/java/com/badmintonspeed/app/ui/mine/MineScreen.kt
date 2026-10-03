@@ -28,6 +28,7 @@ import androidx.compose.ui.unit.sp
 import com.badmintonspeed.app.domain.PerformanceMode
 import com.badmintonspeed.app.domain.SpeedUnit
 import com.badmintonspeed.app.ui.MainViewModel
+import com.badmintonspeed.app.ui.components.liveShadow
 import com.badmintonspeed.app.ui.theme.Error
 import com.badmintonspeed.app.ui.theme.OnSurfaceVariant
 import com.badmintonspeed.app.ui.theme.Primary
@@ -115,7 +116,9 @@ private fun MenuRow(
     Surface(
         shape = RoundedCornerShape(16.dp),
         color = Surface,
-        modifier = Modifier.fillMaxWidth().padding(end = 4.dp).clickable { onOpen() }
+        modifier = Modifier.fillMaxWidth().padding(end = 4.dp)
+            .liveShadow(cornerRadius = 16.dp, strengthDp = 6.dp, alpha = 0.38f)
+            .clickable { onOpen() }
     ) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 14.dp),

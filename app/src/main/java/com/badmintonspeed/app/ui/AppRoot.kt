@@ -36,6 +36,7 @@ import com.badmintonspeed.app.ui.history.RecordDetailScreen
 import com.badmintonspeed.app.ui.home.HomeScreen
 import com.badmintonspeed.app.ui.mine.MineScreen
 import com.badmintonspeed.app.ui.result.ResultScreen
+import com.badmintonspeed.app.ui.sensors.GravityShadowProvider
 import com.badmintonspeed.app.ui.settings.SettingsScreen
 import com.badmintonspeed.app.ui.theme.Background
 import com.badmintonspeed.app.ui.theme.Error
@@ -54,6 +55,15 @@ private val navLabels = listOf("测速模式", "历史记录", "画面设置", "
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun AppRoot(vm: MainViewModel = viewModel()) {
+    // v2.20：陀螺仪/重力驱动全树动态阴影（裸眼 3D）
+    GravityShadowProvider {
+        AppRootContent(vm)
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun AppRootContent(vm: MainViewModel) {
     val screen by vm.screen.collectAsState()
     val error by vm.error.collectAsState()
     val records by vm.records.collectAsState()

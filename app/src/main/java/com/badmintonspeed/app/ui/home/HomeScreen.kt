@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.sp
 import com.badmintonspeed.app.domain.AnalysisRecord
 import com.badmintonspeed.app.ui.MainViewModel
 import com.badmintonspeed.app.ui.components.LiquidGlassCard
+import com.badmintonspeed.app.ui.components.liveShadow
 import com.badmintonspeed.app.ui.theme.Background
 import com.badmintonspeed.app.ui.theme.DividerColor
 import com.badmintonspeed.app.ui.theme.OnBackground
@@ -184,6 +185,7 @@ private fun ModeCard(
                     disabledContentColor = OnSurfaceVariant
                 ),
                 modifier = Modifier.width(140.dp).height(46.dp)
+                    .liveShadow(cornerRadius = 12.dp, strengthDp = 5.dp, alpha = 0.45f)
             ) {
                 Text(buttonText, fontSize = 16.sp, fontWeight = FontWeight.Bold)
             }

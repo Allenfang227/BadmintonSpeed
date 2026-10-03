@@ -49,6 +49,7 @@ import com.badmintonspeed.app.ui.theme.Success
 import com.badmintonspeed.app.ui.theme.Surface
 import com.badmintonspeed.app.ui.theme.SurfaceVariant
 import kotlinx.coroutines.delay
+import com.badmintonspeed.app.ui.components.liveShadow
 
 /**
  * 分析进度页（参考图2/图3）：
@@ -204,7 +205,7 @@ fun AnalysisScreen(vm: MainViewModel) {
                     OutlinedButton(
                         onClick = { vm.cancelAnalysis() },
                         colors = ButtonDefaults.outlinedButtonColors(contentColor = Error),
-                        modifier = Modifier.height(36.dp)
+                        modifier = Modifier.height(36.dp).liveShadow(cornerRadius = 10.dp, strengthDp = 3.dp, alpha = 0.35f)
                     ) {
                         Text("取消", fontSize = 13.sp)
                     }

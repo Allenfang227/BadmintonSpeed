@@ -53,6 +53,7 @@ import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import com.badmintonspeed.app.ui.components.liveShadow
 
 /**
  * 历史记录页（图3）：视频缩略图卡片列表。
@@ -230,7 +231,7 @@ fun RecordDetailScreen(record: AnalysisRecord, onBack: () -> Unit) {
         }
 
         Spacer(Modifier.height(16.dp))
-        androidx.compose.material3.OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth()) {
+        androidx.compose.material3.OutlinedButton(onClick = onBack, modifier = Modifier.fillMaxWidth().liveShadow(cornerRadius = 10.dp, strengthDp = 4.dp, alpha = 0.35f)) {
             Text("返回")
         }
     }

@@ -28,6 +28,7 @@ import com.badmintonspeed.app.ui.theme.Surface
 import com.badmintonspeed.app.data.BallLearner
 import com.badmintonspeed.app.data.CourtModelRepo
 import java.io.File
+import com.badmintonspeed.app.ui.components.liveShadow
 
 /**
  * v2.18 模型训练模式（首页第 3 模块）：
@@ -100,7 +101,7 @@ fun TrainModeScreen(onOpenFiles: () -> Unit, onBack: () -> Unit) {
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Button(onClick = onBack) { Text("← 返回") }
+            Button(onClick = onBack, modifier = Modifier.liveShadow(cornerRadius = 10.dp, strengthDp = 4.dp, alpha = 0.35f)) { Text("← 返回") }
             Spacer(Modifier.weight(1f))
             Text("模型训练（本地学习羽毛球外观）", color = Color.White, fontSize = 20.sp)
             Spacer(Modifier.weight(1f))
@@ -123,7 +124,7 @@ fun TrainModeScreen(onOpenFiles: () -> Unit, onBack: () -> Unit) {
                         color = Color(0xFF90A4AE), fontSize = 13.sp, lineHeight = 19.sp
                     )
                     Spacer(Modifier.height(20.dp))
-                    Button(onClick = onOpenFiles, Modifier.fillMaxWidth()) {
+                    Button(onClick = onOpenFiles, Modifier.fillMaxWidth().liveShadow(cornerRadius = 10.dp, strengthDp = 4.dp, alpha = 0.35f)) {
                         Text("打开模型目录（查看/转发）")
                     }
                     Spacer(Modifier.height(10.dp))
@@ -165,10 +166,10 @@ fun TrainModeScreen(onOpenFiles: () -> Unit, onBack: () -> Unit) {
                     )
                     Spacer(Modifier.height(16.dp))
                     Row {
-                        Button(onClick = { picker.launch("image/*") }, enabled = !busy, modifier = Modifier.weight(1f).padding(end = 8.dp)) {
+                        Button(onClick = { picker.launch("image/*") }, enabled = !busy, modifier = Modifier.weight(1f).padding(end = 8.dp).liveShadow(cornerRadius = 10.dp, strengthDp = 4.dp, alpha = 0.35f)) {
                             Text("选择红框标注图")
                         }
-                        Button(onClick = { trainer.launch("image/*") }, enabled = !busy && sampleCount > 0, modifier = Modifier.weight(1f).padding(start = 8.dp)) {
+                        Button(onClick = { trainer.launch("image/*") }, enabled = !busy && sampleCount > 0, modifier = Modifier.weight(1f).padding(start = 8.dp).liveShadow(cornerRadius = 10.dp, strengthDp = 4.dp, alpha = 0.35f)) {
                             Text("开始训练")
                         }
                     }

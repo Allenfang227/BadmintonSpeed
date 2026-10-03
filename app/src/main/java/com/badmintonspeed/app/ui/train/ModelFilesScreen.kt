@@ -20,6 +20,7 @@ import androidx.compose.ui.unit.sp
 import com.badmintonspeed.app.data.CourtModelRepo
 import com.badmintonspeed.app.ui.theme.Background
 import com.badmintonspeed.app.ui.theme.Surface
+import com.badmintonspeed.app.ui.components.liveShadow
 
 /** 模型目录文件列表：查看 Download/BadmintonSpeed 内容，逐项分享 */
 @Composable
@@ -30,7 +31,7 @@ fun ModelFilesScreen(onBack: () -> Unit) {
 
     Column(Modifier.fillMaxSize().background(Background).padding(24.dp)) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Button(onClick = onBack) { Text("← 返回") }
+            Button(onClick = onBack, modifier = Modifier.liveShadow(cornerRadius = 10.dp, strengthDp = 4.dp, alpha = 0.35f)) { Text("← 返回") }
             Spacer(Modifier.weight(1f))
             Text("模型目录 Download/BadmintonSpeed", color = Color.White, fontSize = 18.sp)
             Spacer(Modifier.weight(1f))
@@ -53,7 +54,7 @@ fun ModelFilesScreen(onBack: () -> Unit) {
                     onClick = { tab = i },
                     colors = if (tab == i) ButtonDefaults.buttonColors()
                     else ButtonDefaults.buttonColors(containerColor = Color(0xFF37474F)),
-                    modifier = Modifier.padding(end = 8.dp)
+                    modifier = Modifier.padding(end = 8.dp).liveShadow(cornerRadius = 10.dp, strengthDp = 4.dp, alpha = 0.35f)
                 ) { Text(t, fontSize = 12.sp) }
             }
         }
