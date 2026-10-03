@@ -4,6 +4,7 @@ import android.graphics.RectF
 import com.badmintonspeed.app.domain.BallPoint
 import com.badmintonspeed.app.domain.HitAnalysis
 import com.badmintonspeed.app.domain.HitType
+import com.badmintonspeed.app.domain.PoseFrameData
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.sqrt
@@ -34,9 +35,14 @@ class HitDetector(
     /**
      * @param points 带速度的轨迹点（speedKmh 已填充）
      * @param playerRects 运动员运动区域（可选，用于击球动作识别）
+     * @param poseFrames 骨骼时间序列（v2.13 可选：跳杀动作识别，强判杀球）
      * @return 击球列表（已做物理校验）
      */
-    fun detect(points: List<BallPoint>, playerRects: List<RectF>? = null): List<HitAnalysis> {
+    fun detect(
+        points: List<BallPoint>,
+        playerRects: List<RectF>? = null,
+        poseFrames: List<PoseFrameData> = emptyList()
+    ): List<HitAnalysis> {
         val hits = ArrayList<HitAnalysis>()
         if (points.size < 8) return hits
         val n = points.size
@@ -136,7 +142,58 @@ class HitDetector(
                 actionConfidence = if (minDist < 320f) 1f else 0.5f
             }
 
-            val type = classify(maxSpeed, angleDeg)
+            // ---- v2.13 轨迹预判：过网判断 + 双场区 ----
+            // 过网：轨迹 courtY 跨过球网中线 6.70m（从一侧飞到另一侧）
+            var netCrossed = false
+            var prevY = traj.first().courtY
+            for (k in 1 until traj.size) {
+                val curY = traj[k].courtY
+                if ((prevY < 6.70f && curY >= 6.70f) || (prevY > 6.70f && curY <= 6.70f)) {
+                    netCrossed = true
+                    break
+                }
+                prevY = curY
+            }
+            // 双场区（相对处理）：网下 y<6.70 = A区（本侧），y>=6.70 = B区（对侧）
+            val landSide = if (landP.courtY < 6.70f) "A" else "B"
+
+            // ---- v2.13 跳杀识别（骨骼）：运动员起跳跳杀 + 球已过网 => 强判杀球 ----
+            // 判断：击球时刻附近的骨架里，有人"手举过头（手腕高于肩）且脚离地（脚踝明显上移）"
+            var jumpSmash = false
+            if (poseFrames.isNotEmpty()) {
+                val hitT = points[i].timeSec
+                val snap = poseFrames.lastOrNull { it.timeSec <= hitT + 0.15 }
+                if (snap != null) {
+                    for (skel in snap.skeletons) {
+                        val wristL = skel.points.getOrNull(15) ?: continue
+                        val wristR = skel.points.getOrNull(16)
+                        val shoulderL = skel.points.getOrNull(11) ?: continue
+                        val shoulderR = skel.points.getOrNull(12)
+                        val footL = skel.points.getOrNull(27)
+                        val footR = skel.points.getOrNull(28)
+                        val ankleL = skel.points.getOrNull(29)
+                        val ankleR = skel.points.getOrNull(30)
+                        val raised = (wristL.visibility > 0.4f && wristL.y < shoulderL.y) ||
+                            (wristR != null && wristR.visibility > 0.4f && shoulderR != null && wristR.y < shoulderR.y)
+                        if (!raised) continue
+                        // 脚离地：脚踝 y 高于骨盆中点（23/24 中点）→ 跳起
+                        val hipL = skel.points.getOrNull(23)
+                        val hipR = skel.points.getOrNull(24)
+                        val hipY = when {
+                            hipL != null && hipR != null -> (hipL.y + hipR.y) / 2f
+                            hipL != null -> hipL.y
+                            else -> Float.MAX_VALUE
+                        }
+                        val feetY = listOfNotNull(ankleL, ankleR, footL, footR).map { it.y }.minOrNull() ?: Float.MAX_VALUE
+                        if (feetY < hipY && feetY < Float.MAX_VALUE) {
+                            jumpSmash = true
+                            break
+                        }
+                    }
+                }
+            }
+
+            val type = classify(maxSpeed, angleDeg, jumpSmash && netCrossed)
             hits.add(
                 HitAnalysis(
                     id = "hit_${String.format("%03d", hitNumber)}",
@@ -146,17 +203,22 @@ class HitDetector(
                     maxSpeedKmh = maxSpeed,
                     avgSpeedKmh = avgSpeed,
                     angleDeg = angleDeg,
-                    trajectory = traj
+                    trajectory = traj,
+                    netCrossed = netCrossed,
+                    landSide = landSide
                 )
             )
         }
         return hits
     }
 
-    /** 规则版击球类型分类（文档 4.4.5 简化） */
-    private fun classify(maxSpeedKmh: Float, angleDeg: Float): HitType {
+    /** 规则版击球类型分类（文档 4.4.5 简化；v2.13 加骨骼跳杀强判） */
+    private fun classify(maxSpeedKmh: Float, angleDeg: Float, jumpSmash: Boolean): HitType {
         return when {
+            // 跳杀：运动员起跳 + 球已过网 => 强判杀球（即使速度没到 140 也算）
+            jumpSmash && maxSpeedKmh >= 60f -> HitType.SMASH
             maxSpeedKmh >= 140f -> HitType.SMASH
+            // 下方击球 -> 抛物线高远球（击球后球往高处飞，角度大）
             maxSpeedKmh >= 80f && abs(angleDeg) > 60f -> HitType.CLEAR
             maxSpeedKmh >= 80f -> HitType.DRIVE
             else -> HitType.DROP

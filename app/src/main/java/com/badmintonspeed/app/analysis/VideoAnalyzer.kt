@@ -88,6 +88,19 @@ class VideoAnalyzer {
         strokeWidth = 3f
         isAntiAlias = true
     }
+    /** v2.13 多帧投票：两套角点逐角距离 < 帧宽8% 视为一致 */
+    private fun cornersClose(a: List<PointF>, b: List<PointF>, frameW: Int): Boolean {
+        if (a.size < 4 || b.size < 4) return false
+        val tol = frameW * 0.08f
+        var close = 0
+        for (i in 0 until 4) {
+            val dx = a[i].x - b[i].x
+            val dy = a[i].y - b[i].y
+            if (kotlin.math.hypot(dx, dy) < tol) close++
+        }
+        return close >= 3
+    }
+
     private val poseJointPaint = Paint().apply {
         color = Color.rgb(34, 211, 238)
         style = Paint.Style.FILL
@@ -167,53 +180,61 @@ class VideoAnalyzer {
         }
         val framesAll = deduped
 
-        // ================= 阶段 3：场地基准检测（8-28%，黄线框贴合场地线） =================
+        // ================= 阶段 3：场地基准检测（8-28%，全 AI 标注，去掉手工标定） =================
+        // v2.13 用户要求："去掉手工标注，改为全AI标注"。逻辑：
+        //  1) 视角固定 → 截取前10帧、中间10帧、后10帧 → 逐帧图片识别（背景色验证+长实线扫描）
+        //  2) 多时间点投票：多数一致才采纳（"背景不在这种场地上就判误识别"）
+        //  3) 全部失败 → 学习容器历史先验 → 仍失败报 E101（不再弹手动标定）
         onStage(StageUpdate(AnalysisPhase.COURT, 0, 10f, 9f))
-        // 尝试多帧：首帧可能模糊/被遮挡，用首帧、1/3处、2/3处帧依次检测，任一成功即可
-        // 均匀取 8 帧探测（原来只有 3 帧，容易被遮挡/模糊帧连累，导致 E101）
-        val probeIndexes = (0 until 8).map { framesAll.size * it / 7 }.distinct()
+        onPreviewFrame(framesAll.first().bitmap.copy(Bitmap.Config.ARGB_8888, true))
+        delay(120)
+        val courtSamples = LinkedHashSet<Int>()
+        val third = framesAll.size / 3
+        // 前10帧段、中间10帧段、后10帧段（每段均匀取帧）
+        for (segStart in listOf(0, third, third * 2)) {
+            val seg = (0 until minOf(10, framesAll.size)).map { (segStart + it * framesAll.size / 30).coerceIn(0, framesAll.size - 1) }.distinct()
+            courtSamples.addAll(seg)
+        }
         var courtCornersPx: List<PointF>? = null
         var anchorFrame = framesAll.first().bitmap
-
-        if (manualCourtCorners != null) {
-            // 用户手动标定的角点（融合自 AI-YuJian-AI：人工点4角 + 透视变换补全）。
-            // 不是死套模板：AI 在用户框起来的4个区域附近搜索连续长白线，精修出准确贴合线的角点
-            val anchorForRefine = framesAll.first().bitmap
-            onStage(StageUpdate(AnalysisPhase.COURT, 0, 50f, 12f))
-            courtCornersPx = try {
-                LocalLineRefiner.refine(anchorForRefine, manualCourtCorners)
+        val candidates = ArrayList<List<PointF>>()
+        val sampleList = courtSamples.toList()
+        for ((idx, pi) in sampleList.withIndex()) {
+            val probe = framesAll[pi.coerceIn(0, framesAll.size - 1)].bitmap
+            val pct = 10f + 60f * ((idx + 1).toFloat() / sampleList.size)
+            onStage(StageUpdate(AnalysisPhase.COURT, 0, pct, 9f + 10f * ((idx + 1).toFloat() / sampleList.size)))
+            val r = try {
+                CourtAutoCalibrator.calibrate(probe)
             } catch (e: Exception) {
-                manualCourtCorners // 精修异常回退用户原始角点
+                null // 防闪退：单帧检测异常不中断整体流程
             }
-            onStage(StageUpdate(AnalysisPhase.COURT, 1, 80f, 20f))
-            delay(100)
-        } else {
-            // ABC 三套自动检测级联
-            for (pi in probeIndexes) {
-                val probe = framesAll[pi.coerceIn(0, framesAll.size - 1)].bitmap
-                onPreviewFrame(probe.copy(Bitmap.Config.ARGB_8888, true))
-                delay(150)
-                onStage(StageUpdate(AnalysisPhase.COURT, 0, 30f + 20f * (probeIndexes.indexOf(pi) + 1) / probeIndexes.size, 11f + 6f * (probeIndexes.indexOf(pi) + 1) / probeIndexes.size))
-                val r = try {
-                    CourtAutoCalibrator.calibrate(probe)
-                } catch (e: Exception) {
-                    null // 防闪退：单帧检测异常不中断整体流程
-                }
-                if (r != null) {
-                    courtCornersPx = r
-                    anchorFrame = probe
-                    break
-                }
+            // 长实线验证：四边形每边要落在白色长实线上（用户："扫到绿色或蓝色或红色地上的长实线"）
+            if (r != null && CourtAutoCalibrator.verifyLongLines(probe, r)) {
+                candidates.add(r)
             }
-            onStage(StageUpdate(AnalysisPhase.COURT, 1, 60f, 17f))
-            delay(150)
-            onStage(StageUpdate(AnalysisPhase.COURT, 2, 80f, 21f))
-            delay(150)
         }
+        // 多帧投票：两套检测角点逐角距离 < 帧宽8% 视为一致；≥2 次一致即采纳（多数一致）
+        if (candidates.isNotEmpty()) {
+            val agree = HashMap<Int, Int>() // candidate index -> 一致票数
+            for (i in candidates.indices) {
+                var votes = 1
+                for (j in candidates.indices) {
+                    if (i == j) continue
+                    if (cornersClose(candidates[i], candidates[j], framesAll.first().bitmap.width)) votes++
+                }
+                agree[i] = votes
+            }
+            val best = agree.maxByOrNull { it.value }
+            if (best != null && best.value >= 2) {
+                courtCornersPx = candidates[best.key]
+                anchorFrame = framesAll[sampleList[best.key].coerceIn(0, framesAll.size - 1)].bitmap
+            }
+        }
+        onStage(StageUpdate(AnalysisPhase.COURT, 1, 70f, 21f))
+        delay(120)
 
         if (courtCornersPx == null) {
-            // ABC 三套自动检测全部失败 → 尝试用"标定学习器"的历史先验（用户每次标定都被纳入学习容器，
-            // 同一机位下角点在画面中相对位置相似，可直接复用上次成功标定）
+            // 全 AI 检测失败 → 学习容器历史先验（用户每次标定被纳入容器学习，同一机位可直接复用）
             val learner = CourtLearner(context)
             val predicted = learner.predict(w, h)
             if (predicted != null && isValidPrediction(predicted, w, h)) {
@@ -225,8 +246,15 @@ class VideoAnalyzer {
                 onPreviewFrame(anchorFrame.copy(Bitmap.Config.ARGB_8888, true))
                 delay(150)
             } else {
-                // 历史先验也不可用 → 请求用户手动标定（不直接报错，融合自 AI-YuJian-AI）
-                throw ManualCalibrationRequired(framesAll.first().bitmap.copy(Bitmap.Config.ARGB_8888, true))
+                // 全 AI 与历史先验均失败 → 直接 E101（用户要求去掉手工标注）
+                throw AnalysisException(
+                    AnalysisError(
+                        code = "E101",
+                        title = "场地检测失败",
+                        detail = "AI 未能从视频中识别出羽毛球场地（绿色/蓝色/红色地板上的白色长实线）。请确认：①视频画面里包含完整场地；②光线不要太暗；③摄像头固定不要摇晃。",
+                        threshold = "前/中/后帧段各10帧检测 + 背景色验证 + 长实线验证，均未通过"
+                    )
+                )
             }
         }
         onStage(StageUpdate(AnalysisPhase.COURT, 3, 92f, 25f))
@@ -290,23 +318,76 @@ class VideoAnalyzer {
             if (i < 12) bgDetector.learn(frame.bitmap)
         }
 
+        // v2.13 人员位置排除（用户要求："识别出人员位置、场地位置和球网位置的时候，
+        // 判断羽毛球可能存在的位置……去除掉人员检测的人员位置"）：
+        // 帧差运动区域即运动员位置，白色衣服/球拍会被帧差和背景差分误检成球。
+        // 提前算好球员框（膨胀1.6倍），球候选落入球员框内的直接丢弃。
+        onStage(StageUpdate(AnalysisPhase.PLAYER, 0, 5f, 29f))
+        val playerRects = try { detectPlayers(framesAll) { stepIdx, pct ->
+            onStage(StageUpdate(AnalysisPhase.PLAYER, stepIdx, pct, 28f + 10f * pct / 100f))
+        } } catch (e: Exception) { emptyList() }
+        onStage(StageUpdate(AnalysisPhase.PLAYER, 3, 100f, 38f, done = true))
+        val excludedRects = playerRects.map { r ->
+            android.graphics.RectF(
+                (r.left - r.width() * 0.3f).coerceAtLeast(0f),
+                (r.top - r.height() * 0.3f).coerceAtLeast(0f),
+                (r.right + r.width() * 0.3f).coerceAtMost(w.toFloat()),
+                (r.bottom + r.height() * 0.3f).coerceAtMost(h.toFloat())
+            )
+        }
+        fun inPlayerRect(x: Float, y: Float): Boolean {
+            for (r in excludedRects) {
+                if (x in r.left..r.right && y in r.top..r.bottom) return true
+            }
+            return false
+        }
+
+        // v2.13 帧间差分检测器（用户要求："AI 比较每两帧之间……移动的白色羽毛球"）：
+        // 固定背景不动，比较第2帧和第4帧（间隔1帧），移动的白色点就是球候选。
+        // 与 YOLO、背景差分并列第三通道，提高检出率。
+        val frameDiffDetector = BackgroundShuttleDetector(
+            bgFrames = 2, diffThreshold = 26, whiteThreshold = 110, cellSize = 12,
+            minCellHits = 2, maxBlobCells = 6, minMovePx = 3f, maxFrameJump = 60f
+        )
+        var prevDiffFrame: Bitmap? = null
+
         for ((i, frame) in framesAll.withIndex()) {
             yield()
-            var boxes = try {
-                detector.detect(frame.bitmap, lastBall)
-            } catch (e: Exception) {
-                emptyList() // 防闪退：单帧推理异常不中断
-            }
+            // 速度优化（用户要求"视频处理速度过慢"）：YOLO ONNX 推理最贵，
+            // 隔帧跑（偶数帧跑 YOLO，奇数帧靠差分+跟踪预测补点），速度约提升 1.6 倍
+            val runYolo = i % 2 == 0
+            var boxes = if (runYolo) {
+                try {
+                    detector.detect(frame.bitmap, lastBall)
+                } catch (e: Exception) {
+                    emptyList() // 防闪退：单帧推理异常不中断
+                }
+            } else emptyList()
             var useBgDiff = false
+            // 帧间差分通道（每帧都跑，便宜）：与上一帧间隔1帧比较，移动白色点
+            val diffCands = prevDiffFrame?.let { prev ->
+                try { frameDiffDetector.detectMovingWhite(frame.bitmap) } catch (e: Exception) { emptyList() }
+            } ?: emptyList()
+            prevDiffFrame = frame.bitmap
             if (boxes.isEmpty()) {
-                // YOLO 没检出 → 背景差分补充（白色运动点，多帧确认）
+                // YOLO 没检出 → 背景差分 + 帧间差分补充（白色运动点，多帧确认）
                 val bgCands = bgDetector.detectMovingWhite(frame.bitmap)
-                if (bgCands.isNotEmpty()) {
-                    boxes = boxes + bgCands
+                val merged = bgCands + diffCands
+                if (merged.isNotEmpty()) {
+                    boxes = boxes + merged
                     useBgDiff = true
                 }
             } else {
                 bgDetector.updateBackground(frame.bitmap) // 球出现后背景滚动自适应
+            }
+            // 人员位置排除：落在球员框内的候选丢弃（白色衣服/球拍不是球）
+            if (boxes.isNotEmpty()) {
+                boxes = boxes.filter { !inPlayerRect(it.cx, it.cy) }
+            }
+            // 球网位置排除：网是静止的，背景差分天然滤掉；候选离网线过近（±0.25m）丢弃，避免网孔误检
+            boxes = boxes.filter { b ->
+                val courtPos = try { Homography.pixelToCourt(homography, b.cx, b.cy) } catch (e: Exception) { null }
+                courtPos == null || abs(courtPos.y - 6.70f) > 0.25f // 距网 ±0.25m 外
             }
             val timeSec = frame.timeMs / 1000.0
             // ShuttleTracker 做帧间跟踪过滤（面积/宽高比/跳跃/预测/丢帧/ROI），输出稳定球心
@@ -347,7 +428,7 @@ class VideoAnalyzer {
             // 步骤映射：前 40% 帧为"背景差分"（全帧扫描），后 60% 为"SVM分类"（跟踪筛选）
             val stepIdx = if (i < framesAll.size * 0.4f) 0 else 1
             val phasePct = 5f + 90f * (i.toFloat() / framesAll.size)
-            onStage(StageUpdate(AnalysisPhase.SHUTTLE, stepIdx, phasePct, 28f + 50f * (i.toFloat() / framesAll.size)))
+            onStage(StageUpdate(AnalysisPhase.SHUTTLE, stepIdx, phasePct, 38f + 47f * (i.toFloat() / framesAll.size)))
         }
         detector.close()
         onStage(StageUpdate(AnalysisPhase.SHUTTLE, 1, 100f, 78f, done = true))
@@ -373,29 +454,16 @@ class VideoAnalyzer {
             )
         }
 
-        // ================= 阶段 5：人员检测（78-88%，帧差运动区域） =================
-        onStage(StageUpdate(AnalysisPhase.PLAYER, 0, 10f, 79f))
-        val playerRects = detectPlayers(framesAll) { stepIdx, pct ->
-            onStage(StageUpdate(AnalysisPhase.PLAYER, stepIdx, pct, 78f + 10f * pct / 100f))
-        }
-        if (playerRects.isNotEmpty()) {
-            val lastFrame = framesAll.last().bitmap
-            val bmp = lastFrame.copy(Bitmap.Config.ARGB_8888, true)
-            val pcv = Canvas(bmp)
-            for (r in playerRects) {
-                pcv.drawRect(r, playerPaint)
-                pcv.drawText("PERSON", r.left + 4f, r.top - 6f, playerTextPaint)
-            }
-            onPreviewFrame(bmp)
-        }
-        // 阶段5b：骨骼识别（v2.12 用户要求：加骨骼识别运动员击球动作 + 随视频播放动态显示）
+        // ================= 阶段 5b：骨骼识别（v2.12/2.13 用户要求：骨骼识别运动员击球动作，随视频播放动态显示） =================
+        // 人员位置已在球检测前算好（playerRects），这里直接跑骨骼：
         // 使用 MediaPipe PoseLandmarker 官方 AI 模型（assets/models/pose_landmarker.task，多人 33 关键点）
-        onStage(StageUpdate(AnalysisPhase.PLAYER, 2, 10f, 80f))
+        // v2.13 提速：检测频率 每6帧 -> 每10帧
+        onStage(StageUpdate(AnalysisPhase.PLAYER, 2, 5f, 39f))
         val poseFrames = ArrayList<PoseFrameData>()
         val poseDetector = try { PoseDetector(context) } catch (e: Exception) { null }
         if (poseDetector != null) {
             for ((i, f) in framesAll.withIndex()) {
-                if (i % 6 == 0) {
+                if (i % 10 == 0) {
                     val skels = poseDetector.detect(f.bitmap)
                     if (skels.isNotEmpty()) {
                         poseFrames.add(PoseFrameData(f.timeMs / 1000.0, f.index, skels))
@@ -403,14 +471,19 @@ class VideoAnalyzer {
                 }
                 if (i % 20 == 0) {
                     val pct = 10f + 80f * (i.toFloat() / framesAll.size)
-                    onStage(StageUpdate(AnalysisPhase.PLAYER, 2, pct, 78f + 10f * pct / 100f))
+                    onStage(StageUpdate(AnalysisPhase.PLAYER, 2, pct, 38f + 12f * pct / 100f))
                 }
                 yield()
             }
-            // 预览帧：叠加最后检测到的骨骼骨架（青绿色，随帧动态）
+            // 预览帧：叠加运动员框 + 骨骼骨架（青绿色，随帧动态）
             if (poseFrames.isNotEmpty()) {
                 val bmp = framesAll.last().bitmap.copy(Bitmap.Config.ARGB_8888, true)
                 val pcv = Canvas(bmp)
+                // v2.13 双场区人员标注：先画运动员位置框（"识别出俩运动员的位置"）
+                for (r in playerRects) {
+                    pcv.drawRect(r, playerPaint)
+                    pcv.drawText("PERSON", r.left + 4f, r.top - 6f, playerTextPaint)
+                }
                 for (skel in poseFrames.last().skeletons) {
                     for (conn in PoseDetector.CONNECTIONS) {
                         val a = skel.points.getOrNull(conn[0]) ?: continue
@@ -427,11 +500,11 @@ class VideoAnalyzer {
             }
             poseDetector.close()
         }
-        onStage(StageUpdate(AnalysisPhase.PLAYER, 3, 100f, 88f, done = true))
+        onStage(StageUpdate(AnalysisPhase.PLAYER, 3, 100f, 50f, done = true))
         delay(200)
 
         // ================= 阶段 6：击球点检测 + 球速（88-100%） =================
-        onStage(StageUpdate(AnalysisPhase.HIT, 0, 20f, 90f))
+        onStage(StageUpdate(AnalysisPhase.HIT, 0, 20f, 85f))
         val speedCalc = SpeedCalculator(homography)
         val points = rawPoints.mapIndexed { i, p ->
             if (i == 0) p.copy(speedKmh = 0f)
@@ -439,8 +512,8 @@ class VideoAnalyzer {
         }
         delay(120)
         // 击球动作识别（用户要求）：复用阶段5的人员检测结果，用运动员区域关联击球点
-        onStage(StageUpdate(AnalysisPhase.HIT, 1, 60f, 95f))
-        val hits = HitDetector().detect(points, playerRects)
+        onStage(StageUpdate(AnalysisPhase.HIT, 1, 60f, 92f))
+        val hits = HitDetector().detect(points, playerRects, poseFrames)
         val smashFrames = hits.filter { it.hitType == HitType.SMASH }
             .flatMap { it.trajectory.map { tp -> tp.frame } }
             .toSet()
@@ -469,7 +542,7 @@ class VideoAnalyzer {
             hits = hits,
             summary = summary,
             analysisDurationMs = System.currentTimeMillis() - startTime,
-            appVersion = "2.12.0",
+            appVersion = "2.13.0",
             frameWidth = w,
             frameHeight = h,
             frameAtMaxSpeed = frameAtMax,

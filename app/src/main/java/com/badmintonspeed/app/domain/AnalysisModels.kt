@@ -58,7 +58,9 @@ data class HitAnalysis(
     val maxSpeedKmh: Float,
     val avgSpeedKmh: Float,
     val angleDeg: Float,
-    val trajectory: List<BallPoint>
+    val trajectory: List<BallPoint>,
+    val netCrossed: Boolean = false,  // v2.13 是否过网（轨迹跨过中线 6.70m）
+    val landSide: String = "A"        // v2.13 落点所在场区：A=靠近本侧(网下y<6.70)，B=对侧
 )
 
 /** 汇总统计 */

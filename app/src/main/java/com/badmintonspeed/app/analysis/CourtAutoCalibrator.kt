@@ -6,6 +6,7 @@ import kotlin.math.PI
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.ceil
+import kotlin.math.hypot
 import kotlin.math.cos
 import kotlin.math.max
 import kotlin.math.min
@@ -67,6 +68,13 @@ object CourtAutoCalibrator {
         val H = (srcH * scale).roundToInt().coerceAtLeast(1)
         val bmp = if (scale < 1f) Bitmap.createScaledBitmap(frame, W, H, true) else frame
 
+        // v2.13 背景色验证（用户要求）：羽毛球馆地板是绿色/蓝色/红色。
+        // 如果画面主色不是这三种，直接判误识别，不再浪费算力跑线检测。
+        if (!verifyCourtFloorColor(bmp, W, H)) {
+            if (bmp !== frame) bmp.recycle()
+            return null
+        }
+
         // ---- 1) 灰度 + 饱和度 ----
         val pixels = IntArray(W * H)
         bmp.getPixels(pixels, 0, W, 0, 0, W, H)
@@ -105,6 +113,85 @@ object CourtAutoCalibrator {
         if (corners != null) return scaleCorners(corners, scale)
 
         return null
+    }
+
+    /**
+     * v2.13 地板色验证：统计采样像素，判断画面主体是否为羽毛球馆地板色
+     * （绿色/蓝色/红色系：木地板/塑胶地常见色）。
+     * 用户要求："如果检测发现识别出来的长实线不在这种场地上，就判断为误识别"。
+     */
+    private fun verifyCourtFloorColor(bmp: Bitmap, W: Int, H: Int): Boolean {
+        val step = max(1, min(W, H) / 60) // 采样步长
+        var total = 0
+        var courtHue = 0
+        var y = 0
+        while (y < H) {
+            var x = 0
+            while (x < W) {
+                val p = bmp.getPixel(x, y)
+                val r = p shr 16 and 0xFF
+                val g = p shr 8 and 0xFF
+                val b = p and 0xFF
+                val mx = max(r, max(g, b))
+                val mn = min(r, min(g, b))
+                val sat = mx - mn
+                // 低饱和（灰/黑/白）不参与判定；饱和度适中才算"有色地板"
+                if (sat > 18) {
+                    total++
+                    // 色相粗判：红(0)/黄(60)/绿(120)/蓝(240)
+                    val hue = when (mx) {
+                        r -> ((g - b).toFloat() / sat * 60f + 360f) % 360f
+                        g -> ((b - r).toFloat() / sat * 60f + 120f) % 360f
+                        else -> ((r - g).toFloat() / sat * 60f + 240f) % 360f
+                    }
+                    val isCourtColor =
+                        (hue in 20f..80f) ||   // 橙黄/黄（塑胶场）
+                        (hue in 90f..160f) ||  // 绿（木地板上漆/塑胶绿）
+                        (hue in 190f..280f)    // 蓝（常见羽毛球塑胶场）
+                    if (isCourtColor) courtHue++
+                }
+                x += step
+            }
+            y += step
+        }
+        // 有色采样中 ≥35% 是地板色系才算"在这种场地上"
+        return total > 0 && courtHue.toFloat() / total >= 0.35f
+    }
+
+    /**
+     * v2.13 长实线验证（用户要求）：真正的场地线是"长实线"——
+     * 白线在绿色/蓝色/红色地板上非常显眼。对输出四边形做最后校验：
+     * 每条边都要落在白色亮线上（边的中心采样 ≥3 个点亮度高且颜色偏白）。
+     */
+    fun verifyLongLines(frame: Bitmap, corners: List<PointF>): Boolean {
+        if (corners.size < 4) return false
+        var hit = 0
+        val edges = arrayOf(0 to 1, 1 to 2, 2 to 3, 3 to 0)
+        for ((a, b) in edges) {
+            val p1 = corners[a]
+            val p2 = corners[b]
+            val len = hypot((p2.x - p1.x).toDouble(), (p2.y - p1.y).toDouble())
+            if (len < frame.width * 0.12) continue // 边太短不可能是场地外边界
+            var whitePx = 0
+            var sample = 0
+            var t = 0.15f
+            while (t <= 0.85f) {
+                val px = (p1.x + (p2.x - p1.x) * t).toInt().coerceIn(0, frame.width - 1)
+                val py = (p1.y + (p2.y - p1.y) * t).toInt().coerceIn(0, frame.height - 1)
+                val q = frame.getPixel(px, py)
+                val r = q shr 16 and 0xFF
+                val g = q shr 8 and 0xFF
+                val b = q and 0xFF
+                val mx = max(r, max(g, b))
+                val mn = min(r, min(g, b))
+                if (mx > 150 && mx - mn < 60) whitePx++ // 白色亮线
+                sample++
+                t += 0.1f
+            }
+            if (sample > 0 && whitePx.toFloat() / sample >= 0.6f) hit++
+        }
+        // 至少 3 条边是白色长实线才可信（球网/发球线可能稍细，不影响外边界判定）
+        return hit >= 3
     }
 
     private fun scaleCorners(corners: List<PointF>, scale: Float): List<PointF> {

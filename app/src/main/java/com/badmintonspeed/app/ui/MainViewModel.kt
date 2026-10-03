@@ -167,12 +167,6 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 _screen.value = Screen.Result
             } catch (ce: CancellationException) {
                 throw ce
-            } catch (e: VideoAnalyzer.ManualCalibrationRequired) {
-                if (!cancelFlag.get()) {
-                    // ABC自动检测全失败 → 进入手动标定界面（不报错，融合自 AI-YuJian-AI 人工标定）
-                    _calibrationFrame.value = e.firstFrame
-                    _screen.value = Screen.Calibrate
-                }
             } catch (e: VideoAnalyzer.AnalysisException) {
                 if (!cancelFlag.get()) {
                     _error.value = e.error

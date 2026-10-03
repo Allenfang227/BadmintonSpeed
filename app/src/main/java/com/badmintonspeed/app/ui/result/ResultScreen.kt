@@ -56,6 +56,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.badmintonspeed.app.domain.AnalysisResult
+import com.badmintonspeed.app.domain.HitAnalysis
 import com.badmintonspeed.app.ui.MainViewModel
 import com.badmintonspeed.app.ui.components.CourtOverlay
 import com.badmintonspeed.app.ui.components.PoseOverlay
@@ -149,8 +150,10 @@ fun ResultScreen(vm: MainViewModel) {
     val shotSpeed: Float
     val liveSpeed: Float
     val isIn: Boolean
+    val currentHit: HitAnalysis?
     if (hits.isNotEmpty() && currentHitIndex in hits.indices) {
         val hit = hits[currentHitIndex]
+        currentHit = hit
         shotSpeed = hit.maxSpeedKmh
         // LIVE：当前播放进度在球轨迹中的实时速度（未到击球时刻前显示该球最大速度，过落点后显示落点速度）
         val tNow = progressMs / 1000.0
@@ -160,6 +163,7 @@ fun ResultScreen(vm: MainViewModel) {
         val land = hitPoints.lastOrNull()
         isIn = land?.let { it.courtX in 0f..6.10f && it.courtY in 0f..13.40f } ?: true
     } else {
+        currentHit = null
         val maxP = result.trajectory.maxByOrNull { it.speedKmh ?: 0f }
         shotSpeed = maxP?.speedKmh ?: 0f
         liveSpeed = result.trajectory.lastOrNull()?.speedKmh ?: 0f
@@ -250,6 +254,16 @@ fun ResultScreen(vm: MainViewModel) {
                             fontSize = 16.sp,
                             fontWeight = FontWeight.Black
                         )
+                        // v2.13 双场区 + 过网标记（"视频截分成对面和这边两个场区"）
+                        if (currentHit != null) {
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                text = "${if (currentHit.netCrossed) "过网 " else ""}${currentHit.landSide}区落点",
+                                color = Color(0xFF94A3B8),
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium
+                            )
+                        }
                     }
                 }
             }
