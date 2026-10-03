@@ -11,6 +11,8 @@ import com.badmintonspeed.app.analysis.VideoAnalyzer
 import com.badmintonspeed.app.data.HistoryRepository
 import com.badmintonspeed.app.data.ResultJson
 import com.badmintonspeed.app.data.SettingsRepository
+import com.badmintonspeed.app.analysis.Homography
+import com.badmintonspeed.app.analysis.StandardCourt
 import com.badmintonspeed.app.domain.AnalysisError
 import com.badmintonspeed.app.domain.CourtResult
 import com.badmintonspeed.app.domain.AnalysisRecord
@@ -204,10 +206,52 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _screen.value = Screen.Calibrate
     }
 
+    /** v2.16：手动标定确认后，把 4 角映射成 12 个场地交点，导出成训练 json。
+     *  每次人工标注自动进入本地训练集（labels/ 目录），供 train_keypoints.py 增量训练。 */
     fun submitManualCourtCorners(corners: List<PointF>) {
+        exportCourtLabel(corners)
         _calibrationFrame.value = null
         _screen.value = Screen.Analyzing
         startAnalysis(manualCourtCorners = corners)
+    }
+
+    private fun exportCourtLabel(corners: List<PointF>) {
+        if (corners.size != 4) return
+        try {
+            val h = Homography.compute(corners, StandardCourt.corners) ?: return
+            val bmp = _calibrationFrame.value
+            val W = (bmp?.width ?: 1920).toFloat()
+            val H = (bmp?.height ?: 1080).toFloat()
+            // BWF 12 交点（米制，与 tools/train_keypoints.py 的 TEMPLATE 一致）
+            val template = listOf(
+                "tl_out" to Pair(0.00f, 0.00f), "tr_out" to Pair(6.10f, 0.00f),
+                "br_out" to Pair(6.10f, 13.40f), "bl_out" to Pair(0.00f, 13.40f),
+                "net_l" to Pair(0.00f, 6.70f), "net_r" to Pair(6.10f, 6.70f),
+                "servl_tl" to Pair(0.46f, 4.72f), "servl_tr" to Pair(5.64f, 4.72f),
+                "servl_bl" to Pair(0.46f, 12.64f), "servl_br" to Pair(5.64f, 12.64f),
+                "mid_t" to Pair(3.05f, 4.72f), "mid_b" to Pair(3.05f, 12.64f)
+            )
+            val pts = StringBuilder()
+            var first = true
+            for ((name, m) in template) {
+                val p = Homography.courtToImage(h, m.first, m.second)
+                if (p.x < -0.05f * W || p.x > 1.05f * W || p.y < -0.05f * H || p.y > 1.05f * H) continue
+                if (!first) pts.append(",")
+                pts.append("""{"name":"$name","x":${p.x.toInt()},"y":${p.y.toInt()}}""")
+                first = false
+            }
+            val dir = File(context.filesDir, "labels").apply { mkdirs() }
+            // 保存标定底图
+            var imgName = "frame_${System.currentTimeMillis()}.jpg"
+            if (bmp != null) {
+                val f = File(dir, imgName)
+                f.outputStream().use { out -> bmp.compress(Bitmap.CompressFormat.JPEG, 85, out) }
+            }
+            val json = """{"image":"$imgName","W":$W,"H":$H,"points":[$pts]}"""
+            File(dir, "court_${System.currentTimeMillis()}.json").writeText(json)
+        } catch (e: Exception) {
+            // 导出失败不影响测速主流程
+        }
     }
 
     fun cancelCalibration() {

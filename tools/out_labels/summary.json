@@ -1,0 +1,140 @@
+{
+ "auto_ok": [],
+ "auto_fail": [
+  "sample_01",
+  "sample_02",
+  "sample_03",
+  "sample_04",
+  "sample_05",
+  "sample_07",
+  "sample_08",
+  "sample_10",
+  "sample_11",
+  "sample_12",
+  "sample_13",
+  "sample_14",
+  "sample_15",
+  "sample_16",
+  "sample_17",
+  "sample_18",
+  "sample_19",
+  "sample_20",
+  "sample_21",
+  "sample_22",
+  "sample_23",
+  "sample_24",
+  "sample_25",
+  "sample_26",
+  "sample_27",
+  "sample_28"
+ ],
+ "interference": {
+  "sample_01": {
+   "white_ratio": 0.041,
+   "big_blobs": 6
+  },
+  "sample_02": {
+   "white_ratio": 0.045,
+   "big_blobs": 5
+  },
+  "sample_03": {
+   "white_ratio": 0.05,
+   "big_blobs": 5
+  },
+  "sample_04": {
+   "white_ratio": 0.048,
+   "big_blobs": 5
+  },
+  "sample_05": {
+   "white_ratio": 0.047,
+   "big_blobs": 6
+  },
+  "sample_07": {
+   "white_ratio": 0.147,
+   "big_blobs": 9
+  },
+  "sample_08": {
+   "white_ratio": 0.15,
+   "big_blobs": 12,
+   "reason": "退化拟合(角点挤在一起)"
+  },
+  "sample_10": {
+   "white_ratio": 0.151,
+   "big_blobs": 12,
+   "reason": "退化拟合(角点挤在一起)"
+  },
+  "sample_11": {
+   "white_ratio": 0.133,
+   "big_blobs": 10
+  },
+  "sample_12": {
+   "white_ratio": 0.163,
+   "big_blobs": 11
+  },
+  "sample_13": {
+   "white_ratio": 0.134,
+   "big_blobs": 10
+  },
+  "sample_14": {
+   "white_ratio": 0.028,
+   "big_blobs": 6
+  },
+  "sample_15": {
+   "white_ratio": 0.133,
+   "big_blobs": 10,
+   "reason": "退化拟合(角点挤在一起)"
+  },
+  "sample_16": {
+   "white_ratio": 0.043,
+   "big_blobs": 9
+  },
+  "sample_17": {
+   "white_ratio": 0.044,
+   "big_blobs": 9
+  },
+  "sample_18": {
+   "white_ratio": 0.036,
+   "big_blobs": 5
+  },
+  "sample_19": {
+   "white_ratio": 0.044,
+   "big_blobs": 9
+  },
+  "sample_20": {
+   "white_ratio": 0.026,
+   "big_blobs": 7
+  },
+  "sample_21": {
+   "white_ratio": 0.027,
+   "big_blobs": 5
+  },
+  "sample_22": {
+   "white_ratio": 0.027,
+   "big_blobs": 5
+  },
+  "sample_23": {
+   "white_ratio": 0.036,
+   "big_blobs": 5
+  },
+  "sample_24": {
+   "white_ratio": 0.032,
+   "big_blobs": 6
+  },
+  "sample_25": {
+   "white_ratio": 0.043,
+   "big_blobs": 9
+  },
+  "sample_26": {
+   "white_ratio": 0.044,
+   "big_blobs": 9
+  },
+  "sample_27": {
+   "white_ratio": 0.044,
+   "big_blobs": 9
+  },
+  "sample_28": {
+   "white_ratio": 0.026,
+   "big_blobs": 7
+  }
+ }
+}
