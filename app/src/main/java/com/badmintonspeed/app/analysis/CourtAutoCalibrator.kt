@@ -170,7 +170,7 @@ object CourtAutoCalibrator {
         // v2.15 关键点配准通道（采纳建议："回归关键点 + 套用刚性模板"）：
         // 白线扫描 -> 线交点（关键点）-> RANSAC 拟合 BWF 模板 -> 反投影 4 角。
         // 即使 ABC 线检测失败、只扫到 4~5 个交点也能拟合出场地。
-        val regressed = try { CourtRegressor.regress(bmp) } catch (e: Exception) { null }
+        val regressed = try { CourtRegressor.regress(bmp, roi) } catch (e: Exception) { null }
         if (regressed != null) {
             val v = GeometricVerifier.verify(regressed, srcW, srcH)
             lastDiagnosis = Diagnosis(whiteRatio, true, v.ok, v.ok)

@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
@@ -46,6 +47,7 @@ import com.badmintonspeed.app.ui.theme.SurfaceVariant
 fun HomeScreen(
     vm: MainViewModel,
     onStart: () -> Unit,
+    onTrain: () -> Unit,
     records: List<AnalysisRecord>
 ) {
     Column(
@@ -85,6 +87,16 @@ fun HomeScreen(
                 enabled = true,
                 onClick = onStart
             )
+            // ---- 模型训练（进入） ----
+            ModeCard(
+                modifier = Modifier.weight(1f).padding(start = 28.dp),
+                icon = { TrainIcon() },
+                title = "模型训练",
+                desc = "上传红框标注羽毛球的图片，AI 在本地学习标注区域，训练出专属羽毛球模型，实测时自动调用。",
+                buttonText = "进入",
+                enabled = true,
+                onClick = onTrain
+            )
         }
 
         Spacer(Modifier.weight(1f))
@@ -110,6 +122,21 @@ fun HomeScreen(
                 .height(1.dp)
                 .background(DividerColor)
         )
+    }
+}
+
+@Composable
+private fun TrainIcon() {
+    androidx.compose.foundation.Canvas(Modifier.size(64.dp)) {
+        val c = Color(0xFF4FC3F7)
+        drawCircle(color = c, radius = size.minDimension / 2.2f, style = androidx.compose.ui.graphics.drawscope.Stroke(width = 5f))
+        drawCircle(color = c, radius = size.minDimension / 6f)
+        // 简易"脑/网络"：三个点连线
+        val cx = size.width / 2f; val cy = size.height / 2f
+        val r = size.minDimension / 2.2f
+        drawCircle(color = c, radius = 4f, center = androidx.compose.ui.geometry.Offset(cx - r * 0.6f, cy - r * 0.5f))
+        drawCircle(color = c, radius = 4f, center = androidx.compose.ui.geometry.Offset(cx + r * 0.6f, cy + r * 0.5f))
+        drawCircle(color = c, radius = 4f, center = androidx.compose.ui.geometry.Offset(cx + r * 0.5f, cy - r * 0.6f))
     }
 }
 

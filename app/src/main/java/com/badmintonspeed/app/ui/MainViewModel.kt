@@ -9,6 +9,7 @@ import android.provider.OpenableColumns
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.badmintonspeed.app.analysis.VideoAnalyzer
+import com.badmintonspeed.app.data.CourtModelRepo
 import com.badmintonspeed.app.data.HistoryRepository
 import com.badmintonspeed.app.data.ResultJson
 import com.badmintonspeed.app.data.SettingsRepository
@@ -36,6 +37,8 @@ sealed interface Screen {
     object Home : Screen
     object Calibrate : Screen
     object RoiSelect : Screen
+    object TrainMode : Screen
+    object ModelFiles : Screen
     object Analyzing : Screen
     object Result : Screen
     object History : Screen
@@ -214,6 +217,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     /** v2.17：E101 弹窗"ROI 框选"按钮 → 进入多边形框选（B误检修复：把邻场线/广告拦在本场外） */
     fun retryWithRoiSelect() {
         _error.value = null
+        if (_calibrationFrame.value == null) _calibrationFrame.value = _previewFrame.value
         _screen.value = Screen.RoiSelect
     }
 
@@ -278,7 +282,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 pts.append("""{"name":"$name","x":${p.x.toInt()},"y":${p.y.toInt()}}""")
                 first = false
             }
-            val dir = File(context.filesDir, "labels").apply { mkdirs() }
+            val dir = CourtModelRepo.labelsDir(context)
             // 保存标定底图
             var imgName = "frame_${System.currentTimeMillis()}.jpg"
             if (bmp != null) {
@@ -287,6 +291,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
             }
             val json = """{"image":"$imgName","W":$W,"H":$H,"points":[$pts]}"""
             File(dir, "court_${System.currentTimeMillis()}.json").writeText(json)
+            // 同步到公共目录（用户可在文件管理器找到/转发）
+            CourtModelRepo.exportToPublic(context, "labels")
         } catch (e: Exception) {
             // 导出失败不影响测速主流程
         }

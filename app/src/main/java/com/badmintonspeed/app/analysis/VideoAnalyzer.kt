@@ -12,6 +12,7 @@ import com.badmintonspeed.app.domain.AnalysisPhase
 import com.badmintonspeed.app.domain.AnalysisResult
 import com.badmintonspeed.app.domain.AnalysisSummary
 import com.badmintonspeed.app.analysis.PoseDetector
+import com.badmintonspeed.app.data.BallLearner
 import com.badmintonspeed.app.domain.BallPoint
 import com.badmintonspeed.app.domain.PoseFrameData
 import com.badmintonspeed.app.domain.CourtDimensions
@@ -124,6 +125,10 @@ class VideoAnalyzer {
         onCourt: (CourtResult) -> Unit = {},
         roiPolygon: List<PointF>? = null // v2.17：用户首帧框选的目标场地多边形（B误检修复）
     ): AnalysisResult = withContext(Dispatchers.Default) {
+        // v2.18：本地训练模型（红框标注→模板库），实测时调用辅助识别羽毛球
+        val learnedModel = try {
+            BallLearner.loadModel(File(context.filesDir, "BadmintonSpeed/ball_model"))
+        } catch (e: Exception) { null }
         val startTime = System.currentTimeMillis()
 
         // ================= 阶段 1：先处理视频（0-4%，全程显示画面） =================
@@ -410,6 +415,19 @@ class VideoAnalyzer {
                     boxes = boxes + merged
                     useBgDiff = true
                 }
+                // v2.18 本地训练模型补检：红框标注训练出的羽毛球模板对运动白点打分，
+                // 高置信（>0.58）且不与现有候选重复的补入 boxes（球很小很糊时 YOLO 漏检的救星）
+                if (learnedModel != null && merged.isNotEmpty()) {
+                    val extra = ArrayList<ShuttleOnnxDetector.Box>()
+                    for (c in merged) {
+                        if (boxes.any { kotlin.math.hypot((it.cx - c.cx).toDouble(), (it.cy - c.cy).toDouble()) < 20.0 }) continue
+                        val patch = safeCrop(frame.bitmap, c.cx.toInt(), c.cy.toInt(), 48) ?: continue
+                        val sc = BallLearner.match(patch, learnedModel)
+                        if (sc > 0.58f) extra.add(c)
+                        if (!patch.isRecycled) patch.recycle()
+                    }
+                    if (extra.isNotEmpty()) boxes = boxes + extra
+                }
             } else {
                 bgDetector.updateBackground(frame.bitmap) // 球出现后背景滚动自适应
             }
@@ -575,7 +593,7 @@ class VideoAnalyzer {
             hits = hits,
             summary = summary,
             analysisDurationMs = System.currentTimeMillis() - startTime,
-            appVersion = "2.17.0",
+            appVersion = "2.18.0",
             frameWidth = w,
             frameHeight = h,
             frameAtMaxSpeed = frameAtMax,
@@ -615,6 +633,15 @@ class VideoAnalyzer {
         }
         onProgress(100f)
         return result
+    }
+
+    /** 以 (cx,cy) 为中心裁 size×size 图块（越界自动钳制），失败返回 null */
+    private fun safeCrop(bmp: Bitmap, cx: Int, cy: Int, size: Int): Bitmap? {
+        if (bmp.width < size || bmp.height < size) return null
+        val half = size / 2
+        val left = (cx - half).coerceIn(0, bmp.width - size)
+        val top = (cy - half).coerceIn(0, bmp.height - size)
+        return try { Bitmap.createBitmap(bmp, left, top, size, size) } catch (e: Exception) { null }
     }
 
     private fun grayHash(bmp: Bitmap, sw: Int, sh: Int): IntArray {

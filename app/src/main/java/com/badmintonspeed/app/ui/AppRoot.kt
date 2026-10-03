@@ -38,6 +38,8 @@ import com.badmintonspeed.app.ui.analysis.AnalysisScreen
 import com.badmintonspeed.app.ui.history.HistoryScreen
 import com.badmintonspeed.app.ui.history.RecordDetailScreen
 import com.badmintonspeed.app.ui.home.HomeScreen
+import com.badmintonspeed.app.ui.train.TrainModeScreen
+import com.badmintonspeed.app.ui.train.ModelFilesScreen
 import com.badmintonspeed.app.ui.result.ResultScreen
 import com.badmintonspeed.app.ui.settings.SettingsScreen
 import com.badmintonspeed.app.ui.theme.Background
@@ -92,17 +94,29 @@ fun AppRoot(vm: MainViewModel = viewModel()) {
     }
 
     // 结果/分析页：全屏（无侧栏，参考图 6-9 结果页全屏）
-    val fullScreen = screen is Screen.Analyzing || screen is Screen.Result || screen is Screen.Calibrate
+    val fullScreen = screen is Screen.Analyzing || screen is Screen.Result ||
+        screen is Screen.Calibrate || screen is Screen.RoiSelect ||
+        screen is Screen.TrainMode || screen is Screen.ModelFiles
     if (fullScreen) {
         Box(Modifier.fillMaxSize().background(Background)) {
             when (val s = screen) {
                 is Screen.Calibrate -> CalibrateScreen(vm)
+                is Screen.RoiSelect -> RoiSelectScreen(
+                    frame = vm.calibrationFrame.collectAsState().value,
+                    onSubmit = { vm.submitRoi(it) },
+                    onBack = { vm.goTo(Screen.Home) }
+                )
+                is Screen.TrainMode -> TrainModeScreen(
+                    onOpenFiles = { vm.goTo(Screen.ModelFiles) },
+                    onBack = { vm.goTo(Screen.Home) }
+                )
+                is Screen.ModelFiles -> ModelFilesScreen(onBack = { vm.goTo(Screen.TrainMode) })
                 is Screen.Analyzing -> AnalysisScreen(vm)
                 is Screen.Result -> ResultScreen(vm)
                 else -> {}
             }
         }
-        error?.let { ErrorDialog(it, vm::dismissError, vm::retryWithManualCalibration) }
+        error?.let { ErrorDialog(it, vm::dismissError, vm::retryWithManualCalibration, vm::retryWithRoiSelect) }
         return
     }
 
@@ -153,7 +167,12 @@ fun AppRoot(vm: MainViewModel = viewModel()) {
         // ---- 右侧内容区 ----
         Box(Modifier.fillMaxSize().background(Background)) {
             when (val s = screen) {
-                Screen.Home -> HomeScreen(vm, onStart = { pickVideo.launch(arrayOf("video/*")) }, records)
+                Screen.Home -> HomeScreen(
+                    vm,
+                    onStart = { pickVideo.launch(arrayOf("video/*")) },
+                    onTrain = { vm.goTo(Screen.TrainMode) },
+                    records
+                )
                 Screen.History -> HistoryScreen(vm, records)
                 Screen.Settings -> SettingsScreen(vm)
                 Screen.Tutorial -> com.badmintonspeed.app.ui.tutorial.TutorialScreen()

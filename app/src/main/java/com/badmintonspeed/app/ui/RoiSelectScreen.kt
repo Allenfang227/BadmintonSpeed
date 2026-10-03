@@ -60,6 +60,7 @@ fun RoiSelectScreen(
         Canvas(
             Modifier.fillMaxSize().pointerInput(Unit) {
                 detectTapGestures(
+                    // 单击立即加点：不用 onDoubleTap（双击延迟会让点击"没反应"）
                     onTap = { tap ->
                         if (System.currentTimeMillis() - lastGestureMs < 150) return@detectTapGestures
                         val fitScale = minOf(size.width / bmpW, size.height / bmpH)
@@ -73,9 +74,6 @@ fun RoiSelectScreen(
                         if (bx in -0.4f * bmpW..1.4f * bmpW && by in -0.4f * bmpH..1.4f * bmpH) {
                             points.add(PointF(bx, by))
                         }
-                    },
-                    onDoubleTap = {
-                        if (points.isNotEmpty()) points.removeAt(points.size - 1)
                     }
                 )
             }.pointerInput(Unit) {
@@ -124,7 +122,7 @@ fun RoiSelectScreen(
             Modifier.fillMaxWidth().align(Alignment.BottomCenter).padding(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("已选 ${points.size} 点（≥4 点闭合，双击撤销）", Modifier.weight(1f), fontSize = 13.sp,
+            Text("已选 ${points.size} 点（≥4 点闭合，单点加点，底部按钮撤销）", Modifier.weight(1f), fontSize = 13.sp,
                 color = Color(0xFFB0BEC5))
             if (points.isNotEmpty()) {
                 Button(onClick = { points.removeAt(points.size - 1) }, Modifier.padding(end = 8.dp)) { Text("撤销") }
