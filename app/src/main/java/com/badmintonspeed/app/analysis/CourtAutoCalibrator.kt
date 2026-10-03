@@ -68,12 +68,10 @@ object CourtAutoCalibrator {
         val H = (srcH * scale).roundToInt().coerceAtLeast(1)
         val bmp = if (scale < 1f) Bitmap.createScaledBitmap(frame, W, H, true) else frame
 
-        // v2.13 背景色验证（用户要求）：羽毛球馆地板是绿色/蓝色/红色。
-        // 如果画面主色不是这三种，直接判误识别，不再浪费算力跑线检测。
-        if (!verifyCourtFloorColor(bmp, W, H)) {
-            if (bmp !== frame) bmp.recycle()
-            return null
-        }
+        // v2.14 背景色验证降级为"参考"（不再硬性拒绝）：
+        // 用户实测 v2.13 因地板色验证太严导致 E101——实际场馆地板可能是
+        // 灰色/暗色/反光，或画面被墙面观众席占据。白线四边形本身清晰即可标定。
+        val floorOk = verifyCourtFloorColor(bmp, W, H)
 
         // ---- 1) 灰度 + 饱和度 ----
         val pixels = IntArray(W * H)
@@ -100,7 +98,7 @@ object CourtAutoCalibrator {
             sobelMask(gray, W, H, 160)
         )
         var corners = runPipelines(masksA, W, H, paramsA)
-        if (corners != null) return scaleCorners(corners, scale)
+        if (corners != null) return scaleCorners(corners, scale) // floorOk 仅辅助参考，不阻塞
 
         // 方案B：低阈值 Sobel 边缘 + 宽松聚类
         val masksB = listOf(sobelMask(gray, W, H, 100))
@@ -166,32 +164,44 @@ object CourtAutoCalibrator {
     fun verifyLongLines(frame: Bitmap, corners: List<PointF>): Boolean {
         if (corners.size < 4) return false
         var hit = 0
+        var visibleEdges = 0
         val edges = arrayOf(0 to 1, 1 to 2, 2 to 3, 3 to 0)
         for ((a, b) in edges) {
             val p1 = corners[a]
             val p2 = corners[b]
             val len = hypot((p2.x - p1.x).toDouble(), (p2.y - p1.y).toDouble())
             if (len < frame.width * 0.12) continue // 边太短不可能是场地外边界
+            // 画面内可见段占比：整条边的中心段有多少在画面内（角在画面外的场景，外边会超出画面）
+            var inFrame = 0
+            var total = 0
             var whitePx = 0
             var sample = 0
             var t = 0.15f
             while (t <= 0.85f) {
-                val px = (p1.x + (p2.x - p1.x) * t).toInt().coerceIn(0, frame.width - 1)
-                val py = (p1.y + (p2.y - p1.y) * t).toInt().coerceIn(0, frame.height - 1)
-                val q = frame.getPixel(px, py)
-                val r = q shr 16 and 0xFF
-                val g = q shr 8 and 0xFF
-                val b = q and 0xFF
-                val mx = max(r, max(g, b))
-                val mn = min(r, min(g, b))
-                if (mx > 150 && mx - mn < 60) whitePx++ // 白色亮线
-                sample++
+                val rawX = p1.x + (p2.x - p1.x) * t
+                val rawY = p1.y + (p2.y - p1.y) * t
+                total++
+                if (rawX in 0f..frame.width.toFloat() && rawY in 0f..frame.height.toFloat()) {
+                    inFrame++
+                    val q = frame.getPixel(rawX.toInt().coerceIn(0, frame.width - 1), rawY.toInt().coerceIn(0, frame.height - 1))
+                    val r = q shr 16 and 0xFF
+                    val g = q shr 8 and 0xFF
+                    val b = q and 0xFF
+                    val mx = max(r, max(g, b))
+                    val mn = min(r, min(g, b))
+                    if (mx > 150 && mx - mn < 60) whitePx++ // 白色亮线
+                    sample++
+                }
                 t += 0.1f
             }
-            if (sample > 0 && whitePx.toFloat() / sample >= 0.6f) hit++
+            // 画面内可见段 < 40% 的边（大半在画面外）不参与判罚：用户视角场地的角经常拍不到
+            if (total > 0 && inFrame.toFloat() / total < 0.4f) continue
+            visibleEdges++
+            if (sample > 0 && whitePx.toFloat() / sample >= 0.55f) hit++
         }
-        // 至少 3 条边是白色长实线才可信（球网/发球线可能稍细，不影响外边界判定）
-        return hit >= 3
+        // v2.14：画面内可见边 ≥2 条是白色长实线即可信
+        // （用户视频是斜拍远景，场地 1-2 个角常在画面外，v2.13 要求3条边导致 E101）
+        return hit >= 2 && visibleEdges >= 2
     }
 
     private fun scaleCorners(corners: List<PointF>, scale: Float): List<PointF> {

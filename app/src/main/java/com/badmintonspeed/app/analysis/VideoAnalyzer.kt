@@ -213,7 +213,9 @@ class VideoAnalyzer {
                 candidates.add(r)
             }
         }
-        // 多帧投票：两套检测角点逐角距离 < 帧宽8% 视为一致；≥2 次一致即采纳（多数一致）
+        // 多帧投票（v2.14 借鉴 VLX-Seek"候选区域检索+选择"思路放宽）：
+        // ①多帧一致（≥2套角点相近）优先采纳；②否则取第一个通过长实线验证的候选直接采纳——
+        // 用户视频是固定机位斜拍，帧间角点可能因反光/遮挡有细微差异，单帧高置信也应可用。
         if (candidates.isNotEmpty()) {
             val agree = HashMap<Int, Int>() // candidate index -> 一致票数
             for (i in candidates.indices) {
@@ -225,10 +227,12 @@ class VideoAnalyzer {
                 agree[i] = votes
             }
             val best = agree.maxByOrNull { it.value }
-            if (best != null && best.value >= 2) {
-                courtCornersPx = candidates[best.key]
-                anchorFrame = framesAll[sampleList[best.key].coerceIn(0, framesAll.size - 1)].bitmap
+            courtCornersPx = if (best != null && best.value >= 2) {
+                candidates[best.key] // 多帧一致：最高置信
+            } else {
+                candidates.first() // 单帧通过验证：直接采纳（不再死板要求多数一致）
             }
+            anchorFrame = framesAll[sampleList[0].coerceIn(0, framesAll.size - 1)].bitmap
         }
         onStage(StageUpdate(AnalysisPhase.COURT, 1, 70f, 21f))
         delay(120)
@@ -542,7 +546,7 @@ class VideoAnalyzer {
             hits = hits,
             summary = summary,
             analysisDurationMs = System.currentTimeMillis() - startTime,
-            appVersion = "2.13.0",
+            appVersion = "2.14.0",
             frameWidth = w,
             frameHeight = h,
             frameAtMaxSpeed = frameAtMax,
