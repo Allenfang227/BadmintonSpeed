@@ -18,6 +18,8 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -52,6 +54,8 @@ fun HomeScreen(
     onTrain: () -> Unit,
     records: List<AnalysisRecord>
 ) {
+    val isAnalyzing by vm.isAnalyzing.collectAsState()
+    val stage by vm.stage.collectAsState()
     Column(
         Modifier.fillMaxSize().background(WhiteBg).padding(horizontal = 48.dp, vertical = 30.dp),
         horizontalAlignment = Alignment.CenterHorizontally
@@ -74,6 +78,26 @@ fun HomeScreen(
             Box(Modifier.width(60.dp).height(1.dp).background(DividerLight))
         }
         Spacer(Modifier.height(28.dp))
+
+        if (isAnalyzing) {
+            val pct = (stage?.totalPercent ?: 0f).toInt()
+            Row(
+                Modifier.fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(CardBg)
+                    .border(1.dp, CardBorder, RoundedCornerShape(14.dp))
+                    .clickable { vm.resumeAnalysis() }
+                    .padding(horizontal = 18.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text("●", color = Primary, fontSize = 13.sp)
+                Spacer(Modifier.width(10.dp))
+                Text("分析进行中（$pct%），点击继续", color = TitleDark, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Spacer(Modifier.weight(1f))
+                Text("继续 ›", color = Primary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+            }
+            Spacer(Modifier.height(16.dp))
+        }
 
         Row(Modifier.fillMaxWidth().weight(1f)) {
             ModeCard(

@@ -47,7 +47,7 @@ class CourtSegDetector(context: Context) {
                 context.assets.open(MODEL_ASSET).use { ins -> ins.copyTo(out) }
             }
         }
-        return env.createSession(cacheFile.absolutePath, OrtSession.SessionOptions())
+        return env.createSession(cacheFile.absolutePath, OrtSessions.options())
     }
 
     /** 对帧做场地分割，返回原图尺寸掩码；无检出/低置信返回 null */

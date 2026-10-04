@@ -48,8 +48,7 @@ class TrackNetV3Detector(context: Context) {
                 context.assets.open(MODEL_ASSET).use { it.copyTo(out) }
             }
         }
-        val opts = OrtSession.SessionOptions().apply { setIntraOpNumThreads(4) }
-        session = env.createSession(cache.absolutePath, opts)
+        session = env.createSession(cache.absolutePath, OrtSessions.options())
     }
 
     private val plane = MH * MW

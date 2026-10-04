@@ -55,7 +55,7 @@ class OnnxUserModel private constructor(private val session: OrtSession) {
                     if (!f.exists()) continue
                     return try {
                         val env = OrtEnvironment.getEnvironment()
-                        val sess = env.createSession(f.absolutePath, OrtSession.SessionOptions())
+                        val sess = env.createSession(f.absolutePath, OrtSessions.options())
                         OnnxUserModel(sess)
                     } catch (e: Exception) {
                         null

@@ -8,6 +8,7 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.badmintonspeed.app.analysis.CourtLearner
 import com.badmintonspeed.app.analysis.VideoAnalyzer
 import com.badmintonspeed.app.analysis.VideoFrameExtractor
 import com.badmintonspeed.app.data.CourtModelRepo
@@ -99,26 +100,32 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private var analyzeJob: Job? = null
     private val cancelFlag = AtomicBoolean(false)
 
+    // v2.30：分析是否进行中（误返回/切后台后可"继续当前分析"，任务不丢）
+    private val _isAnalyzing = MutableStateFlow(false)
+    val isAnalyzing: StateFlow<Boolean> = _isAnalyzing
+
     fun goTo(screen: Screen) {
         _screen.value = screen
     }
 
-    /** 用户选择视频后：复制到私有目录，直接进入分析（场地由 AI 自动标定） */
+    /**
+     * 用户选择视频后 v2.30：复制到私有目录 → 先取第一帧做"前置场地标定"。
+     *  - 同机位已有持久化标定（court_calib）→ 直接复用，不打扰用户；
+     *  - 没有 → 先进 4 角标定页，标定结果存入训练集后立即开始处理视频。
+     * 不再"先转完整视频、识别失败后才要求标定、又重转一遍"，省去重复等待。
+     */
     fun onVideoPicked(uri: Uri) {
         viewModelScope.launch {
-            val ok = withContext(Dispatchers.IO) {
+            val target = withContext(Dispatchers.IO) {
                 runCatching {
                     val name = queryDisplayName(uri) ?: "video_${System.currentTimeMillis()}.mp4"
                     val safeName = name.replace(Regex("[^a-zA-Z0-9._\\-]"), "_")
                     val videosDir = File(context.filesDir, "videos").apply { mkdirs() }
-                    val target = File(videosDir, safeName)
+                    val t = File(videosDir, safeName)
                     val input = context.contentResolver.openInputStream(uri)
                         ?: throw Exception("无法读取所选视频")
-                    input.use { ins ->
-                        target.outputStream().use { out -> ins.copyTo(out) }
-                    }
-                    _videoFile.value = target
-                    true
+                    input.use { ins -> t.outputStream().use { out -> ins.copyTo(out) } }
+                    t
                 }.getOrElse { e ->
                     _error.value = AnalysisError(
                         code = "E000",
@@ -126,10 +133,29 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         detail = e.message ?: "无法读取所选视频",
                         threshold = "需要可读的视频文件（mp4/3gp 等）"
                     )
-                    false
+                    null
                 }
             }
-            if (ok) startAnalysis()
+            if (target == null) { _screen.value = Screen.Home; return@launch }
+            _videoFile.value = target
+
+            // 提取第一帧作为标定底图（分析分辨率 maxDimension=960，与后续解码口径一致）
+            val firstFrame = withContext(Dispatchers.IO) {
+                runCatching { VideoFrameExtractor().getFrame(target, 0L, 960) }.getOrNull()
+            }
+            if (firstFrame == null) {
+                // 第一帧都提不出：视频可能损坏/过短，直接进分析由 E001 判定
+                startAnalysis()
+                return@launch
+            }
+            // 同机位已有持久化标定 → 直接复用，不打扰
+            val saved = CourtLearner(context).predict(firstFrame.width, firstFrame.height)
+            if (saved != null && saved.size == 4) {
+                startAnalysis(manualCourtCorners = saved)
+            } else {
+                _calibrationFrame.value = firstFrame
+                _screen.value = Screen.Calibrate
+            }
         }
     }
 
@@ -145,12 +171,14 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _courtResult.value = null
         _analysisStartMs.value = System.currentTimeMillis()
         _screen.value = Screen.Analyzing
-        // v2.17：ROI 优先用本次传入；未传入时读上次同机位保存的（固定机位只框一次）
-        val roi = roiPolygon ?: loadRoi()
+        // v2.30：已用 4 角明确标定场地时不再叠加旧 ROI（二者作用重复、易冲突）；
+        // 仅 AI 自动检测（无手动角点）时才读上次同机位保存的 ROI。
+        val roi = roiPolygon ?: if (manualCourtCorners == null) loadRoi() else null
         // v2.27.3：失败重试（手动标定后）复用同一视频已解码帧，跳过重新转格式
         val reuse = if (manualCourtCorners != null && _lastFramesVideo == file.absolutePath) _lastFrames else null
 
         analyzeJob = viewModelScope.launch {
+            _isAnalyzing.value = true
             try {
                 val fps = settings.performanceMode.analysisFps
                 val result = VideoAnalyzer().analyze(
@@ -214,6 +242,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     )
                     _screen.value = Screen.Home
                 }
+            } finally {
+                _isAnalyzing.value = false
             }
         }
     }
@@ -223,6 +253,16 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         analyzeJob?.cancel()
         _previewFrame.value = null
         _screen.value = Screen.Home
+    }
+
+    /** v2.30 后台运行：不取消分析，仅回到首页（分析继续在跑），首页可"继续当前分析" */
+    fun minimizeAnalysis() {
+        if (_isAnalyzing.value) _screen.value = Screen.Home
+    }
+
+    /** v2.30 回到分析页继续（分析任务仍在运行，进度不丢） */
+    fun resumeAnalysis() {
+        if (_isAnalyzing.value) _screen.value = Screen.Analyzing
     }
 
     /** 用户手动标定完4个角点后，用这些角点继续分析（跳过自动场地检测） */

@@ -44,7 +44,7 @@ class ShuttleOnnxDetector(
                 context.assets.open(MODEL_ASSET).use { ins -> ins.copyTo(out) }
             }
         }
-        return env.createSession(cacheFile.absolutePath, OrtSession.SessionOptions())
+        return env.createSession(cacheFile.absolutePath, OrtSessions.options())
     }
 
     /**

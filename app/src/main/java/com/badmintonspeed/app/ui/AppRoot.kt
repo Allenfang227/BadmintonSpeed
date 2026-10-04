@@ -69,6 +69,7 @@ fun AppRoot(vm: MainViewModel = viewModel()) {
     val records by vm.records.collectAsState()
     val context = LocalContext.current
     var showExitDialog by remember { mutableStateOf(false) }
+    var showAnalyzeMenu by remember { mutableStateOf(false) }
 
     val pickVideo = rememberLauncherForActivityResult(
         ActivityResultContracts.OpenDocument()
@@ -78,7 +79,7 @@ fun AppRoot(vm: MainViewModel = viewModel()) {
 
     BackHandler(enabled = true) {
         when (screen) {
-            is Screen.Analyzing -> vm.cancelAnalysis()
+            is Screen.Analyzing -> showAnalyzeMenu = true
             is Screen.Result -> vm.goTo(Screen.Home)
             is Screen.RecordDetail -> vm.goTo(Screen.History)
             else -> if (screen is Screen.Home) {
@@ -199,6 +200,28 @@ fun AppRoot(vm: MainViewModel = viewModel()) {
             },
             dismissButton = {
                 TextButton(onClick = { showExitDialog = false }) { Text("取消", color = OnSurfaceVariant) }
+            }
+        )
+    }
+
+    // v2.30 分析中返回：继续分析 / 后台运行 / 取消分析（防误触丢任务）
+    if (showAnalyzeMenu) {
+        AlertDialog(
+            onDismissRequest = { showAnalyzeMenu = false },
+            title = { Text("分析进行中") },
+            text = { Text("分析仍在运行，切到后台也会继续，可随时回来查看进度。") },
+            confirmButton = {
+                TextButton(onClick = {
+                    showAnalyzeMenu = false
+                    vm.minimizeAnalysis()
+                }) { Text("后台运行") }
+                TextButton(onClick = { showAnalyzeMenu = false }) { Text("继续分析") }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    showAnalyzeMenu = false
+                    vm.cancelAnalysis()
+                }) { Text("取消分析", color = Error) }
             }
         )
     }

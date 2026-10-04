@@ -43,6 +43,8 @@ object CourtModelRepo {
             if (!srcDir.exists()) return false
             val rel = if (subDir != null) "$ROOT_NAME/$subDir" else ROOT_NAME
             val files = srcDir.listFiles() ?: return false
+            // v2.30：先确保 .nomedia 就位，再写图片 —— 训练图（球样本/标定底图）不被图库收录
+            addNoMedia(context)
             for (f in files) {
                 if (!f.isFile) continue
                 val data = f.readBytes()
@@ -66,6 +68,45 @@ object CourtModelRepo {
                 }
             }
             true
+        } catch (e: Exception) { false }
+    }
+
+    /**
+     * v2.30 在公共 Download/BadmintonSpeed/ 写 .nomedia：
+     * 阻止系统图库/相册扫描该目录及所有子目录里的训练图片（球样本、标定底图），
+     * 文件管理器仍可正常查看这些图片。放在根目录一份即可覆盖全部子目录。
+     */
+    fun addNoMedia(context: Context): Boolean {
+        return try {
+            if (Build.VERSION.SDK_INT >= 29) {
+                val resolver = context.contentResolver
+                val rel = "Download/$ROOT_NAME/"
+                // 已存在则不重复写
+                val exists = resolver.query(
+                    MediaStore.Downloads.EXTERNAL_CONTENT_URI,
+                    arrayOf(MediaStore.Downloads._ID),
+                    "${MediaStore.Downloads.RELATIVE_PATH}=? AND ${MediaStore.Downloads.DISPLAY_NAME}=?",
+                    arrayOf(rel, ".nomedia"), null
+                )?.use { it.moveToFirst() } ?: false
+                if (exists) return true
+                val v = ContentValues().apply {
+                    put(MediaStore.Downloads.DISPLAY_NAME, ".nomedia")
+                    put(MediaStore.Downloads.MIME_TYPE, "application/octet-stream")
+                    put(MediaStore.Downloads.RELATIVE_PATH, rel)
+                    put(MediaStore.Downloads.IS_PENDING, 1)
+                }
+                val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, v) ?: return false
+                resolver.openOutputStream(uri)?.use { it.write(ByteArray(0)) }
+                v.clear(); v.put(MediaStore.Downloads.IS_PENDING, 0)
+                resolver.update(uri, v, null, null)
+                true
+            } else {
+                val dir = File(
+                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
+                    ROOT_NAME
+                ).apply { mkdirs() }
+                File(dir, ".nomedia").createNewFile()
+            }
         } catch (e: Exception) { false }
     }
 

@@ -188,6 +188,12 @@ class VideoAnalyzer {
         } catch (e: Exception) { null }
         // v2.24：训练完导出的用户 ONNX 模型（优先于模板打分，缺失/失败自动回退）
         val userOnnx = try { OnnxUserModel.load(context) } catch (e: Exception) { null }
+        // v2.30 明确用户训练模型的加载状态（用户反馈"报错都不知道训练了哪个/是否生效"）
+        val userModelStatus = when {
+            userOnnx != null -> "已加载你的专属 ONNX 模型，已参与判定"
+            learnedModel != null -> "已加载你的模板模型（${learnedModel.count} 个模板，建议导出 ONNX），已参与判定"
+            else -> "未加载到你的训练模型（请在模型训练页导入、训练并导出 ONNX）"
+        }
         val startTime = System.currentTimeMillis()
 
         // ================= 阶段 1：先转格式/抽帧（0-10%，全程显示画面） =================
@@ -669,7 +675,7 @@ class VideoAnalyzer {
                 AnalysisError(
                     code = "E201",
                     title = "羽毛球检测失败",
-                    detail = "YOLO、帧间差分与 TrackNet 专业模型均未能稳定识别出羽毛球：请确保羽毛球在画面中清晰可见（不要太小、不要和白色背景融合），且击球过程完整出现在画面内。建议：①离场地近一点拍；②拉近镜头让球更大；③保证球和背景颜色差异明显。",
+                    detail = "YOLO、帧间差分与 TrackNet 专业模型均未能稳定识别出羽毛球：请确保羽毛球在画面中清晰可见（不要太小、不要和白色背景融合），且击球过程完整出现在画面内。建议：①离场地近一点拍；②拉近镜头让球更大；③保证球和背景颜色差异明显。\n\n本次：$userModelStatus。",
                     threshold = "检出帧 $detectedFrames / 总帧 ${framesAll.size}（YOLO $yoloHits + 差分 $bgDiffHits + TrackNet 复检），需要 ≥ 6 帧"
                 )
             )
@@ -791,7 +797,7 @@ class VideoAnalyzer {
             hits = hits,
             summary = summary,
             analysisDurationMs = System.currentTimeMillis() - startTime,
-            appVersion = "2.29.0",
+            appVersion = "2.30.0",
             frameWidth = w,
             frameHeight = h,
             frameAtMaxSpeed = frameAtMax,

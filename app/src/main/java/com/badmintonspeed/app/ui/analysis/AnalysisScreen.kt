@@ -62,23 +62,8 @@ fun AnalysisScreen(vm: MainViewModel) {
     val stage by vm.stage.collectAsState()
     val preview by vm.previewFrame.collectAsState()
     val court by vm.courtResult.collectAsState()
-    val startMs by vm.analysisStartMs.collectAsState()
-
-    // 每 1 秒刷新一次剩余时长估算
-    val nowState = remember { mutableStateOf(System.currentTimeMillis()) }
-    LaunchedEffect(startMs) {
-        while (true) {
-            nowState.value = System.currentTimeMillis()
-            delay(1000)
-        }
-    }
 
     val totalPct = stage?.totalPercent ?: 0f
-    val elapsedMs = (nowState.value - startMs).coerceAtLeast(0L)
-    val remainSec = if (totalPct >= 2f) {
-        val speed = elapsedMs / totalPct // ms per percent
-        (speed * (100f - totalPct) / 1000f).toLong()
-    } else 0L
 
     Column(Modifier.fillMaxSize().background(Color.White).padding(16.dp)) {
         // ---- 顶部标题 ----
@@ -214,8 +199,11 @@ fun AnalysisScreen(vm: MainViewModel) {
                     }
                 }
                 Spacer(Modifier.height(4.dp))
+                // v2.30 不显示不准的预估时间，改为"当前正在进行的项目（阶段·步骤）"
+                val curPhaseTitle = stage?.phase?.title ?: "准备中"
+                val curStepName = stage?.let { s -> s.phase.steps.getOrNull(s.stepIndex) }
                 Text(
-                    "预计时长约 ${fmtDuration(remainSec)}，您可退出应用，程序会继续",
+                    if (curStepName != null) "当前：$curPhaseTitle · $curStepName" else "当前：$curPhaseTitle",
                     color = WDesc,
                     fontSize = 12.sp
                 )
@@ -292,11 +280,4 @@ private fun StepRow(name: String, state: String) {
             fontWeight = if (state == "current") FontWeight.Bold else FontWeight.Normal
         )
     }
-}
-
-private fun fmtDuration(sec: Long): String {
-    if (sec <= 0) return "1分钟"
-    val m = sec / 60
-    val s = sec % 60
-    return if (m > 0) "${m}分${s}秒" else "${s}秒"
 }
