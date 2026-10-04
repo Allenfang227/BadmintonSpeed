@@ -178,7 +178,9 @@ class VideoAnalyzer {
         onPreviewFrame: (Bitmap) -> Unit,
         manualCourtCorners: List<PointF>? = null,
         onCourt: (CourtResult) -> Unit = {},
-        roiPolygon: List<PointF>? = null // v2.17：用户首帧框选的目标场地多边形（B误检修复）
+        roiPolygon: List<PointF>? = null, // v2.17：用户首帧框选的目标场地多边形（B误检修复）
+        reuseFrames: List<VideoFrameExtractor.AnalyzedFrame>? = null, // v2.27.3：失败重试复用已解码帧（跳过重新转格式）
+        onFrames: (List<VideoFrameExtractor.AnalyzedFrame>) -> Unit = {} // v2.27.3：解码完成后暴露帧供上层缓存
     ): AnalysisResult = withContext(Dispatchers.Default) {
         // v2.18：本地训练模型（红框标注→模板库），实测时调用辅助识别羽毛球
         val learnedModel = try {
@@ -191,34 +193,46 @@ class VideoAnalyzer {
         // ================= 阶段 1：先转格式/抽帧（0-10%，全程显示画面） =================
         // v2.23 用户要求"处理视频主要是转化成需要的格式，而不是开始测速"：
         // 此阶段只做 MediaCodec 顺序解码 + 抽帧（不再逐帧 seek），不跑任何检测
-        val extractor = VideoFrameExtractor()
-        val extracted = extractor.extract(
-            file = videoFile,
-            analysisFps = analysisFps,
-            maxDimension = 1280,
-            onProgress = { done, total ->
-                onStage(
-                    StageUpdate(
-                        phase = AnalysisPhase.COURT,
-                        stepIndex = 0,
-                        phasePercent = 0f,
-                        totalPercent = 10f * (done.toFloat() / total.coerceAtLeast(1))
+        // v2.27.3：失败重试（手动标定后）直接复用上层缓存的已解码帧，跳过重新转格式——
+        // 用户框选完场地不想再等一次解码。
+        var videoInfo: VideoInfo? = null
+        val frames: List<VideoFrameExtractor.AnalyzedFrame> = if (reuseFrames != null && reuseFrames.size >= 8) {
+            onStage(StageUpdate(AnalysisPhase.COURT, 0, 0f, 3f))
+            onStage(StageUpdate(AnalysisPhase.COURT, 0, 100f, 10f, done = true))
+            onPreviewFrame(reuseFrames.first().bitmap)
+            reuseFrames
+        } else {
+            val extractor = VideoFrameExtractor()
+            val extracted = extractor.extract(
+                file = videoFile,
+                analysisFps = analysisFps,
+                maxDimension = 1280,
+                onProgress = { done, total ->
+                    onStage(
+                        StageUpdate(
+                            phase = AnalysisPhase.COURT,
+                            stepIndex = 0,
+                            phasePercent = 0f,
+                            totalPercent = 10f * (done.toFloat() / total.coerceAtLeast(1))
+                        )
+                    )
+                },
+                onPreview = { bmp -> onPreviewFrame(bmp) }
+            )
+            if (extracted.frames.size < 8) {
+                throw AnalysisException(
+                    AnalysisError(
+                        code = "E001",
+                        title = "视频解码失败或过短",
+                        detail = "未能从视频中提取到足够帧数，请换一段 2 秒以上、画面清晰的视频。",
+                        threshold = "提取帧数 ${extracted.frames.size} / 需要 ≥ 8"
                     )
                 )
-            },
-            onPreview = { bmp -> onPreviewFrame(bmp) }
-        )
-        if (extracted.frames.size < 8) {
-            throw AnalysisException(
-                AnalysisError(
-                    code = "E001",
-                    title = "视频解码失败或过短",
-                    detail = "未能从视频中提取到足够帧数，请换一段 2 秒以上、画面清晰的视频。",
-                    threshold = "提取帧数 ${extracted.frames.size} / 需要 ≥ 8"
-                )
-            )
+            }
+            videoInfo = extracted.info
+            onFrames(extracted.frames)
+            extracted.frames
         }
-        val frames = extracted.frames
         val w = frames.first().bitmap.width
         val h = frames.first().bitmap.height
 
@@ -721,13 +735,13 @@ class VideoAnalyzer {
         onStage(StageUpdate(AnalysisPhase.HIT, 2, 100f, 100f, done = true))
 
         AnalysisResult(
-            videoInfo = extracted.info,
+            videoInfo = videoInfo!!,
             court = court,
             trajectory = finalPoints,
             hits = hits,
             summary = summary,
             analysisDurationMs = System.currentTimeMillis() - startTime,
-            appVersion = "2.27.2",
+            appVersion = "2.27.3",
             frameWidth = w,
             frameHeight = h,
             frameAtMaxSpeed = frameAtMax,

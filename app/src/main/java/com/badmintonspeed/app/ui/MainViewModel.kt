@@ -9,6 +9,7 @@ import android.provider.OpenableColumns
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.badmintonspeed.app.analysis.VideoAnalyzer
+import com.badmintonspeed.app.analysis.VideoFrameExtractor
 import com.badmintonspeed.app.data.CourtModelRepo
 import com.badmintonspeed.app.data.HistoryRepository
 import com.badmintonspeed.app.data.ResultJson
@@ -87,6 +88,10 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     val calibrationFrame: StateFlow<Bitmap?> = _calibrationFrame
     private var pendingManualCorners: List<PointF>? = null
 
+    // v2.27.3：失败重试帧缓存（同一视频已解码帧 + 路径指纹，重标定后跳过重新转格式）
+    private var _lastFrames: List<VideoFrameExtractor.AnalyzedFrame>? = null
+    private var _lastFramesVideo: String? = null
+
     // 历史
     private val _records = MutableStateFlow<List<AnalysisRecord>>(emptyList())
     val records: StateFlow<List<AnalysisRecord>> = _records
@@ -142,6 +147,8 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _screen.value = Screen.Analyzing
         // v2.17：ROI 优先用本次传入；未传入时读上次同机位保存的（固定机位只框一次）
         val roi = roiPolygon ?: loadRoi()
+        // v2.27.3：失败重试（手动标定后）复用同一视频已解码帧，跳过重新转格式
+        val reuse = if (manualCourtCorners != null && _lastFramesVideo == file.absolutePath) _lastFrames else null
 
         analyzeJob = viewModelScope.launch {
             try {
@@ -157,7 +164,18 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     },
                     manualCourtCorners = manualCourtCorners,
                     onCourt = { c -> _courtResult.value = c },
-                    roiPolygon = roi
+                    roiPolygon = roi,
+                    reuseFrames = reuse,
+                    onFrames = { fr ->
+                        // 内存保护：≤900 帧且估算 ≤600MB 才缓存（够重试用，防 OOM）
+                        if (fr.size in 8..900) {
+                            val est = fr.sumOf { f -> f.bitmap.width.toLong() * f.bitmap.height * 4L }
+                            if (est <= 600L * 1024 * 1024) {
+                                _lastFrames = fr
+                                _lastFramesVideo = file.absolutePath
+                            }
+                        }
+                    }
                 )
                 _result.value = result
 

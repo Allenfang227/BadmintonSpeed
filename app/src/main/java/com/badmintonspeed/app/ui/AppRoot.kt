@@ -95,17 +95,12 @@ fun AppRoot(vm: MainViewModel = viewModel()) {
 
     // 结果/分析页：全屏（无侧栏，参考图 6-9 结果页全屏）
     val fullScreen = screen is Screen.Analyzing || screen is Screen.Result ||
-        screen is Screen.Calibrate || screen is Screen.RoiSelect ||
+        screen is Screen.Calibrate ||
         screen is Screen.TrainMode || screen is Screen.ModelFiles
     if (fullScreen) {
         Box(Modifier.fillMaxSize().background(Background)) {
             when (val s = screen) {
                 is Screen.Calibrate -> CalibrateScreen(vm)
-                is Screen.RoiSelect -> RoiSelectScreen(
-                    frame = vm.calibrationFrame.collectAsState().value,
-                    onSubmit = { vm.submitRoi(it) },
-                    onBack = { vm.goTo(Screen.Home) }
-                )
                 is Screen.TrainMode -> TrainModeScreen(
                     onOpenFiles = { vm.goTo(Screen.ModelFiles) },
                     onBack = { vm.goTo(Screen.Home) }
@@ -116,7 +111,7 @@ fun AppRoot(vm: MainViewModel = viewModel()) {
                 else -> {}
             }
         }
-        error?.let { ErrorDialog(it, vm::dismissError, vm::retryWithManualCalibration, vm::retryWithRoiSelect) }
+        error?.let { ErrorDialog(it, vm::dismissError, vm::retryWithManualCalibration) }
         return
     }
 
@@ -184,7 +179,7 @@ fun AppRoot(vm: MainViewModel = viewModel()) {
         }
     }
 
-    error?.let { ErrorDialog(it, vm::dismissError, vm::retryWithManualCalibration, vm::retryWithRoiSelect) }
+    error?.let { ErrorDialog(it, vm::dismissError, vm::retryWithManualCalibration) }
 
     if (showExitDialog) {
         AlertDialog(
@@ -249,7 +244,7 @@ private fun ErrorDialog(
     error: com.badmintonspeed.app.domain.AnalysisError,
     onDismiss: () -> Unit,
     onManualCalibrate: (() -> Unit)? = null,
-    onRoiSelect: (() -> Unit)? = null
+    onRoiSelect: (() -> Unit)? = null // v2.27.3: ROI 入口移除，参数保留兼容
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -265,7 +260,6 @@ private fun ErrorDialog(
             TextButton(onClick = onDismiss) { Text("知道了") }
             if (error.suggestManual) {
                 TextButton(onClick = { onManualCalibrate?.invoke() }) { Text("手动标定", color = Error) }
-                TextButton(onClick = { onRoiSelect?.invoke() }) { Text("ROI框选", color = Color(0xFF4FC3F7)) }
             }
         }
     )
