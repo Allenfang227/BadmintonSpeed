@@ -28,8 +28,10 @@ object OrtSessions {
         OrtSession.SessionOptions().apply {
             setIntraOpNumThreads(intraThreads)
             setInterOpNumThreads(INTER_THREADS)
-            // 超线程增强：全图优化（常量折叠/算子融合）+ NNAPI（华为NPU）
+            // 超线程增强：全图优化（常量折叠/算子融合）
             setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
+            // NPU 神经网络处理器推理：调度华为达芬奇NPU（麒麟9000S），
+            // 不支持的算子自动回退 CPU，保证兼容性
             runCatching { addNnapi() }
         }
 }
