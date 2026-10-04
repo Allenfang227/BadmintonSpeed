@@ -78,7 +78,7 @@ object CourtAutoCalibrator {
     /** 依次返回 左上、右上、右下、左下 四个角点（原图像素坐标），失败返回 null。
      *  @param roi 用户框选的目标场地凸多边形（原图坐标，≥4点），非空时所有候选线段/关键点
      *             先做掩码拦截——落在多边形外的线直接丢弃（B误检 100% 修复：邻场线/广告/地板缝） */
-    fun calibrate(frame: Bitmap, roi: List<PointF>? = null): List<PointF>? {
+    fun calibrate(frame: Bitmap, roi: List<PointF>? = null, aiMask: BooleanArray? = null): List<PointF>? {
         val srcW = frame.width
         val srcH = frame.height
         val scale = min(1f, WORK_MAX_SIDE.toFloat() / max(srcW, srcH))
@@ -134,7 +134,7 @@ object CourtAutoCalibrator {
         // 绿色地板掩码 + 多方向游程线段 + 平行线族选向 + 交点十字校验 + BWF 模板 RANSAC + 球网选场。
         // 旧 ABC 管线常输出"半构造贴合"的结果而被校验放行，必须让新算法先跑。 ----
         val roiScaled = roi?.map { PointF(it.x * scale, it.y * scale) }
-        val regressed = try { CourtRegressor.regress(bmp, roiScaled) } catch (e: Exception) { null }
+        val regressed = try { CourtRegressor.regress(bmp, roiScaled, aiMask) } catch (e: Exception) { null }
         if (regressed != null) {
             val v = GeometricVerifier.verify(regressed, srcW, srcH)
             lastDiagnosis = Diagnosis(whiteRatio, true, v.ok, v.ok)
@@ -180,7 +180,7 @@ object CourtAutoCalibrator {
 
         // v2.15 关键点配准通道（v3 已在 1.5 步优先执行，此处仅 ABC 失败后的最后兜底重试）：
         // 白线扫描 -> 线交点（关键点）-> RANSAC 拟合 BWF 模板 -> 反投影 4 角。
-        val regressedFallback = try { CourtRegressor.regress(bmp, roiScaled) } catch (e: Exception) { null }
+        val regressedFallback = try { CourtRegressor.regress(bmp, roiScaled, aiMask) } catch (e: Exception) { null }
         if (regressedFallback != null) {
             val v = GeometricVerifier.verify(regressedFallback, srcW, srcH)
             lastDiagnosis = Diagnosis(whiteRatio, true, v.ok, v.ok)

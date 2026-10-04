@@ -41,8 +41,10 @@ object CourtRegressor {
     var lastConfidence: Float = 0f
         private set
 
-    /** 依次返回 左上、右上、右下、左下 四个角点（原图像素坐标），失败返回 null。 */
-    fun regress(frame: Bitmap, roi: List<PointF>? = null): List<PointF>? {
+    /** 依次返回 左上、右上、右下、左下 四个角点（原图像素坐标），失败返回 null。
+     *  @param aiMask v2.28 开源分割模型的场地掩码（原图尺寸）：非空且有效时，
+     *   白线提取直接用 AI 掩码作为空间约束（不依赖颜色），失败回退颜色掩码逻辑 */
+    fun regress(frame: Bitmap, roi: List<PointF>? = null, aiMask: BooleanArray? = null): List<PointF>? {
         lastConfidence = 0f
         val srcW = frame.width
         val srcH = frame.height
@@ -77,7 +79,23 @@ object CourtRegressor {
         }
 
         // ---- 1. 白线掩码（绿色地板空间约束 + 亮度/饱和度/局部对比） ----
-        val white = enhanceWhite(gray, sat, hue, W, H, roi, scale)
+        // v2.28：开源 AI 分割掩码优先作为空间约束（原图尺寸，需按 scale 缩放裁剪）
+        var aiScaled: BooleanArray? = null
+        if (aiMask != null) {
+            val mW = frame.width; val mH = frame.height
+            val xs = (W.toFloat() / mW); val ys = (H.toFloat() / mH)
+            aiScaled = BooleanArray(W * H)
+            for (yy in 0 until H) {
+                val sy = (yy / ys).toInt().coerceIn(0, mH - 1)
+                var base = yy * W
+                var srcBase = sy * mW
+                for (xx in 0 until W) {
+                    val sx = (xx / xs).toInt().coerceIn(0, mW - 1)
+                    aiScaled[base + xx] = aiMask[srcBase + sx]
+                }
+            }
+        }
+        val white = enhanceWhite(gray, sat, hue, W, H, roi, scale, aiScaled)
         val whiteCount = countTrue(white)
         if (whiteCount < 400) return null
 
@@ -264,7 +282,7 @@ object CourtRegressor {
 
     private fun enhanceWhite(
         gray: IntArray, sat: IntArray, hue: IntArray, W: Int, H: Int,
-        roi: List<PointF>?, scale: Float
+        roi: List<PointF>?, scale: Float, aiScaled: BooleanArray? = null
     ): BooleanArray {
         // 地板灰度基准：中部区域直方图峰（占比 ≥1% 的最大峰）
         val cy0 = (H * 0.25).toInt(); val cy1 = (H * 0.75).toInt()
@@ -279,6 +297,30 @@ object CourtRegressor {
         var bestCnt = -1
         for (i in 20 until 240) {
             if (hist[i] > cropSize / 100 && hist[i] > bestCnt) { bestCnt = hist[i]; floorVal = i }
+        }
+
+        // v2.28：开源 AI 分割掩码优先——掩码有效（覆盖≥15% 且含足够区域）时
+        // 直接作为空间约束（不依赖颜色，蓝色/木地板/深色场地都能罩住），跳过颜色定位逻辑
+        if (aiScaled != null) {
+            val hits = countTrue(aiScaled)
+            if (hits.toFloat() / (W * H) >= CourtSegDetector.MIN_COVERAGE) {
+                val mFloor = BooleanArray(W * H)
+                val mLoc = BooleanArray(W * H)
+                for (i in gray.indices) {
+                    mFloor[i] = gray[i] - floorVal > 40 && sat[i] < 70
+                }
+                val mean = boxMean(gray, W, H, 31)
+                for (i in gray.indices) {
+                    mLoc[i] = gray[i] - mean[i] > 25 && sat[i] < 80
+                }
+                // 形态学去孤点（白线是连续亮条）：OPEN 1px = erode→dilate
+                var white = BooleanArray(W * H)
+                for (i in white.indices) {
+                    white[i] = (mFloor[i] || mLoc[i]) && aiScaled[i]
+                }
+                white = dilate(erode(white, W, H, 1), W, H, 1)
+                return white
+            }
         }
 
         val mFloor = BooleanArray(W * H)

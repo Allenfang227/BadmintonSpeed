@@ -277,6 +277,20 @@ class VideoAnalyzer {
         }
         val candidates = ArrayList<List<PointF>>()
         val sampleList = courtSamples.toList()
+        // v2.28 开源真AI场地分割：只对首帧跑 1 次（场地静态），
+        // 输出原图尺寸场地掩码作为白线提取的空间约束（不依赖颜色，含蓝色/木地板场地）
+        var aiSeg: CourtSegDetector.SegMask? = null
+        var aiSegDetector: CourtSegDetector? = null
+        try {
+            aiSegDetector = CourtSegDetector(context)
+            val firstProbe = frames[0].bitmap
+            onStage(StageUpdate(AnalysisPhase.COURT, 0, 3f, 12f))
+            aiSeg = aiSegDetector.segment(firstProbe)
+        } catch (e: Exception) {
+            aiSeg = null // AI 分割失败不阻塞：回退颜色掩码
+        } finally {
+            aiSegDetector?.close()
+        }
         // v2.15 E101 失败分类统计（A漏检/B误检/C拓扑错/D几何歪）：
         // 用户要求"每一类占比 + 判断主因"，先积累采样帧的诊断信号再给出占比
         val diagCount = IntArray(4) // [A漏检, B误检, C拓扑错, D几何歪]
@@ -285,7 +299,7 @@ class VideoAnalyzer {
             val pct = 12f + 20f * ((idx + 1).toFloat() / sampleList.size)
             onStage(StageUpdate(AnalysisPhase.COURT, 0, pct, 13f + 16f * ((idx + 1).toFloat() / sampleList.size)))
             val r = try {
-                CourtAutoCalibrator.calibrate(probe, roiPolygon)
+                CourtAutoCalibrator.calibrate(probe, roiPolygon, aiSeg?.mask)
             } catch (e: Exception) {
                 null // 防闪退：单帧检测异常不中断整体流程
             }
@@ -741,7 +755,7 @@ class VideoAnalyzer {
             hits = hits,
             summary = summary,
             analysisDurationMs = System.currentTimeMillis() - startTime,
-            appVersion = "2.27.3",
+            appVersion = "2.28.0",
             frameWidth = w,
             frameHeight = h,
             frameAtMaxSpeed = frameAtMax,

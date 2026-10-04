@@ -2,15 +2,15 @@ package com.badmintonspeed.app.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// 深绿 + 黑深色主题（参考图 2/3/4/5：深绿色主视觉）
-val Primary = Color(0xFF22C55E)          // 亮绿：主按钮/高亮
-val OnPrimary = Color(0xFF06120A)
-val PrimaryContainer = Color(0xFF14532D)
-val OnPrimaryContainer = Color(0xFFBBF7D0)
-val Secondary = Color(0xFF4ADE80)
-val OnSecondary = Color(0xFF052E16)
-val SecondaryContainer = Color(0xFF14532D)
-val OnSecondaryContainer = Color(0xFFBBF7D0)
+// 深色主题（v2.28 主色由绿改蓝：杀球测速字体/高亮转蓝色，观感更清爽）
+val Primary = Color(0xFF3B82F6)          // 亮蓝：主按钮/高亮（原绿 0xFF22C55E）
+val OnPrimary = Color(0xFF060F1A)
+val PrimaryContainer = Color(0xFF1E3A8A)
+val OnPrimaryContainer = Color(0xFFDBEAFE)
+val Secondary = Color(0xFF60A5FA)
+val OnSecondary = Color(0xFF062033)
+val SecondaryContainer = Color(0xFF1E3A8A)
+val OnSecondaryContainer = Color(0xFFDBEAFE)
 val Background = Color(0xFF0A1410)       // 深绿黑：内容区底
 val OnBackground = Color(0xFFE7F0EA)
 val Surface = Color(0xFF0E1B15)          // 侧栏/卡片底
@@ -21,7 +21,7 @@ val SurfaceBright = Color(0xFF1C352A)
 val DividerColor = Color(0xFF1E3327)
 val Error = Color(0xFFEF4444)
 val OnError = Color.White
-val Success = Color(0xFF22C55E)
+val Success = Color(0xFF3B82F6)
 val Warning = Color(0xFFFACC15)
 
 // 黄色流光轨迹（图6-9 效果）
