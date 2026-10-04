@@ -147,7 +147,11 @@ fun TrainModeScreen(onOpenFiles: () -> Unit, onBack: () -> Unit) {
                     shape = RoundedCornerShape(20.dp),
                     colors = CardDefaults.cardColors(containerColor = Surface)
                 ) {
-                    Column(Modifier.fillMaxSize().padding(20.dp)) {
+                    Column(
+                        Modifier.fillMaxSize()
+                            .verticalScroll(rememberScrollState())
+                            .padding(20.dp)
+                    ) {
                         Text("模型文件", color = Color.White, fontSize = 17.sp)
                         Spacer(Modifier.height(8.dp))
                         Text(
@@ -180,7 +184,11 @@ fun TrainModeScreen(onOpenFiles: () -> Unit, onBack: () -> Unit) {
                     shape = RoundedCornerShape(20.dp),
                     colors = CardDefaults.cardColors(containerColor = Surface)
                 ) {
-                    Column(Modifier.fillMaxSize().padding(20.dp)) {
+                    Column(
+                        Modifier.fillMaxSize()
+                            .verticalScroll(rememberScrollState())
+                            .padding(20.dp)
+                    ) {
                         Text("训练流程（正确使用方法）", color = Color.White, fontSize = 17.sp)
                         Spacer(Modifier.height(8.dp))
                         Text(
@@ -195,7 +203,7 @@ fun TrainModeScreen(onOpenFiles: () -> Unit, onBack: () -> Unit) {
                         OutlinedButton(onClick = { doExportOnnx() }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("③ 导出 ONNX（生成 shuttle_user.onnx）") }
                         Spacer(Modifier.height(14.dp))
                         Text(log, color = Color(0xFFECEFF1), fontSize = 12.sp, lineHeight = 17.sp,
-                            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()))
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 120.dp))
                     }
                 }
             }

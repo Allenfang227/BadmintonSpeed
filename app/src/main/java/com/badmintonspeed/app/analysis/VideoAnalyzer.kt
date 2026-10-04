@@ -628,13 +628,49 @@ class VideoAnalyzer {
         detector.close()
         onStage(StageUpdate(AnalysisPhase.SHUTTLE, 1, 100f, 88f, done = true))
 
+        // v2.29 TrackNetV3 专业模型兜底：轻量检测（YOLO+帧差）帧不足、即将抛 E201 前，
+        // 用 TrackNet 复检补点。常规视频轻量已成功 → 不跑，不拖慢；失败 → 慢但准。
+        if (detectedFrames < 6) {
+            val tn = try { TrackNetV3Detector(context) } catch (e: Exception) { null }
+            if (tn != null) {
+                onStage(StageUpdate(AnalysisPhase.SHUTTLE, 2, 0f, 88f))
+                val hits = try {
+                    tn.detect(framesAll) { doneW, totalW ->
+                        val p = 88f + 3f * doneW / totalW.coerceAtLeast(1)
+                        onStage(StageUpdate(AnalysisPhase.SHUTTLE, 2, p, p))
+                    }
+                } catch (e: Exception) { emptyMap() }
+                for ((framePos, h) in hits) {
+                    // 排除球员框（白衣/球拍不是球）
+                    if (inPlayerRect(h.x, h.y)) continue
+                    // 排除球网 ±0.25m
+                    val cp = try { Homography.pixelToCourt(homography, h.x, h.y) } catch (e: Exception) { null }
+                    if (cp != null && abs(cp.y - 6.70f) <= 0.25f) continue
+                    // 同帧已有点：跳过
+                    if (rawPoints.any { it.frame == h.frameIndex }) continue
+                    val fr = framesAll[framePos]
+                    rawPoints.add(
+                        BallPoint(
+                            frame = h.frameIndex,
+                            timeSec = fr.timeMs / 1000.0,
+                            x = h.x, y = h.y, confidence = h.conf,
+                            courtX = cp?.x ?: 0f, courtY = cp?.y ?: 0f
+                        )
+                    )
+                    detectedFrames++
+                }
+                tn.close()
+                onStage(StageUpdate(AnalysisPhase.SHUTTLE, 2, 100f, 91f, done = true))
+            }
+        }
+
         if (detectedFrames < 6) {
             throw AnalysisException(
                 AnalysisError(
                     code = "E201",
                     title = "羽毛球检测失败",
-                    detail = "YOLO 与背景差分双通道均未能稳定识别出羽毛球：请确保羽毛球在画面中清晰可见（不要太小、不要和白色背景融合），且击球过程完整出现在画面内。建议：①离场地近一点拍；②拉近镜头让球更大；③保证球和背景颜色差异明显。",
-                    threshold = "检出帧 $detectedFrames / 总帧 ${framesAll.size}（YOLO $yoloHits + 背景差分 $bgDiffHits），需要 ≥ 6 帧"
+                    detail = "YOLO、帧间差分与 TrackNet 专业模型均未能稳定识别出羽毛球：请确保羽毛球在画面中清晰可见（不要太小、不要和白色背景融合），且击球过程完整出现在画面内。建议：①离场地近一点拍；②拉近镜头让球更大；③保证球和背景颜色差异明显。",
+                    threshold = "检出帧 $detectedFrames / 总帧 ${framesAll.size}（YOLO $yoloHits + 差分 $bgDiffHits + TrackNet 复检），需要 ≥ 6 帧"
                 )
             )
         }
@@ -655,7 +691,7 @@ class VideoAnalyzer {
         // v2.13 提速：检测频率 每6帧 -> 每10帧
         // v2.25 人员检测优化：用骨架关键点（含手腕=球拍端）生成更精确的运动员外接框，
         // 并入 playerRects（结果页显示 + 击球动作关联用），避免"白色衣服/球拍当球"的误检区域漏盖。
-        onStage(StageUpdate(AnalysisPhase.PLAYER, 2, 5f, 88f))
+        onStage(StageUpdate(AnalysisPhase.PLAYER, 2, 5f, 91f))
         val poseFrames = ArrayList<PoseFrameData>()
         val posePlayerRects = ArrayList<RectF>()   // v2.25 骨架外接框（比帧差框更贴人）
         val poseDetector = try { PoseDetector(context) } catch (e: Exception) { null }
@@ -680,7 +716,7 @@ class VideoAnalyzer {
                 }
                 if (i % 20 == 0) {
                     val pct = 10f + 80f * (i.toFloat() / framesAll.size)
-                    onStage(StageUpdate(AnalysisPhase.PLAYER, 2, pct, 88f + 6f * pct / 100f))
+                    onStage(StageUpdate(AnalysisPhase.PLAYER, 2, pct, 91f + 4f * pct / 100f))
                 }
                 yield()
             }
@@ -711,7 +747,7 @@ class VideoAnalyzer {
         }
         // v2.25 人员检测优化：骨架外接框并入球员框（比帧差框更贴人，结果页显示/击球关联更准）
         if (posePlayerRects.isNotEmpty()) playerRects = (playerRects + posePlayerRects)
-        onStage(StageUpdate(AnalysisPhase.PLAYER, 3, 100f, 94f, done = true))
+        onStage(StageUpdate(AnalysisPhase.PLAYER, 3, 100f, 95f, done = true))
         delay(200)
 
         // ================= 阶段 6：击球点检测 + 球速（94-100%） =================
@@ -755,7 +791,7 @@ class VideoAnalyzer {
             hits = hits,
             summary = summary,
             analysisDurationMs = System.currentTimeMillis() - startTime,
-            appVersion = "2.28.0",
+            appVersion = "2.29.0",
             frameWidth = w,
             frameHeight = h,
             frameAtMaxSpeed = frameAtMax,

@@ -2,8 +2,10 @@ package com.badmintonspeed.app.analysis
 
 import android.content.Context
 import android.graphics.PointF
+import com.badmintonspeed.app.data.CourtModelRepo
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.File
 
 /**
  * 场地标定学习器（用户要求："每次标完之后把那个东西纳入容器里面进行学习，用于提高识别精准度"）：
@@ -14,6 +16,7 @@ import org.json.JSONObject
  */
 class CourtLearner(context: Context) {
 
+    private val appContext = context.applicationContext
     private val prefs = context.getSharedPreferences("court_learner", Context.MODE_PRIVATE)
     private val keyCalib = "calibrations"
     private val maxKeep = 10
@@ -49,13 +52,27 @@ class CourtLearner(context: Context) {
         val root = JSONArray()
         for (e in list) root.put(e)
         prefs.edit().putString(keyCalib, root.toString()).apply()
+
+        // v2.29 同时持久化到公共模型库：覆盖更新/卸载重装后由 syncFromPublic 恢复，
+        // 不丢、可转发分享，且同机位下一个视频自动复用。
+        try {
+            val dir = CourtModelRepo.courtCalibDir(appContext)
+            File(dir, "latest.json").writeText(entry.toString())
+            CourtModelRepo.exportToPublic(appContext, "court_calib")
+        } catch (e: Exception) {
+            // 公共目录写入失败不影响主流程（SharedPreferences 仍在）
+        }
     }
 
     /** 用最近一次学习到的标定先验，生成当前帧尺寸的像素角点 */
     fun predict(frameW: Int, frameH: Int): List<PointF>? {
-        val entries = loadEntries()
-        if (entries.isEmpty()) return null
-        val latest = entries.last()
+        // v2.29 优先读持久化文件（启动 syncFromPublic 已从公共 Download 恢复）；
+        // 文件缺失再回退 SharedPreferences。
+        val fileLatest = try {
+            val f = File(CourtModelRepo.courtCalibDir(appContext), "latest.json")
+            if (f.exists()) JSONObject(f.readText()) else null
+        } catch (e: Exception) { null }
+        val latest = fileLatest ?: loadEntries().lastOrNull() ?: return null
         val arr = latest.optJSONArray("corners") ?: return null
         if (arr.length() != 4) return null
         return (0 until 4).map { i ->

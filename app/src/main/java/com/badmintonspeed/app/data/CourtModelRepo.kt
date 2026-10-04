@@ -32,6 +32,10 @@ object CourtModelRepo {
     fun modelDir(context: Context): File =
         File(rootDir(context), "ball_model").apply { mkdirs() }
 
+    /** v2.29 场地四角标定持久化目录（跨更新/重装/分享不丢，同机位自动复用） */
+    fun courtCalibDir(context: Context): File =
+        File(rootDir(context), "court_calib").apply { mkdirs() }
+
     /** 导出权威目录 → 公共 Download/BadmintonSpeed（MediaStore，免存储权限） */
     fun exportToPublic(context: Context, subDir: String? = null): Boolean {
         return try {
@@ -177,7 +181,7 @@ object CourtModelRepo {
     fun syncFromPublic(context: Context): SyncResult {
         var restored = 0; var nTemplates = 0; var nSamples = 0; var nLabels = 0
         try {
-            for (sub in listOf("labels", "ball_samples", "ball_model")) {
+            for (sub in listOf("labels", "ball_samples", "ball_model", "court_calib")) {
                 val files = listPublic(context, sub)
                 val dstDir = File(rootDir(context), sub).apply { mkdirs() }
                 for (pf in files) {
