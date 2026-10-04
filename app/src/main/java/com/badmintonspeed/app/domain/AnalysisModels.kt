@@ -24,12 +24,14 @@ data class CourtResult(
     val homography: FloatArray
 )
 
-/** 击球类型 */
+/** 击球类型（v2.25 按优化方案扩展到 6 类：杀球/高远/吊/平抽/网前/挑球） */
 enum class HitType(val displayName: String) {
     SMASH("杀球"),
     CLEAR("高远球"),
     DROP("吊球"),
     DRIVE("平抽球"),
+    NET("网前球"),
+    LIFT("挑球"),
     UNKNOWN("未知")
 }
 
@@ -60,7 +62,17 @@ data class HitAnalysis(
     val angleDeg: Float,
     val trajectory: List<BallPoint>,
     val netCrossed: Boolean = false,  // v2.13 是否过网（轨迹跨过中线 6.70m）
-    val landSide: String = "A"        // v2.13 落点所在场区：A=靠近本侧(网下y<6.70)，B=对侧
+    val landSide: String = "A",       // v2.13 落点所在场区：A=靠近本侧(网下y<6.70)，B=对侧
+    val landZone: String = "",        // v2.25 落点六分区：左/右前场、左/右中场、左/右后场
+    val peakHeightM: Float = 0f       // v2.25 轨迹最高点高度（米，球类判别的弧线特征）
+)
+
+/** 高光片段（v2.25 模型七：规则引擎，不需要神经网络） */
+data class Highlight(
+    val type: String,       // "杀球" / "多拍" / "平抽"
+    val startSec: Double,
+    val endSec: Double,
+    val desc: String
 )
 
 /** 汇总统计 */
@@ -91,7 +103,8 @@ data class AnalysisResult(
     val frameWidth: Int,
     val frameHeight: Int,
     val frameAtMaxSpeed: Int,
-    val poseFrames: List<PoseFrameData> = emptyList()
+    val poseFrames: List<PoseFrameData> = emptyList(),
+    val highlights: List<Highlight> = emptyList()   // v2.25 高光片段（规则引擎）
 )
 
 /** 持久化的历史记录 */

@@ -145,6 +145,12 @@ class ShuttleOnnxDetector(
         }
     }
 
+    /**
+     * v2.25 局部放大重检（模型一优化：球小/运动模糊时 YOLO 漏检的增强通道）。
+     * 传入已放大到 640x640 的候选 patch，返回 patch 内 640 尺度坐标的球框。
+     */
+    fun detectPatch(patch640: Bitmap): List<Box> = runInference(patch640)
+
     /** 对 640x640 的位图直接推理（局部重检用），返回 640 尺度坐标 */
     private fun runInference(bitmap: Bitmap): List<Box> {
         val pixels = IntArray(INPUT_SIZE * INPUT_SIZE)

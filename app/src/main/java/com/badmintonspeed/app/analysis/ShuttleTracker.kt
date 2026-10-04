@@ -28,6 +28,9 @@ class ShuttleTracker(
     private val trajectory = ArrayDeque<PointF>(trajectoryLength)
     private var lastValid: PointF? = null
     private var missingFrames = 0
+    private var staticStreak = 0      // v2.25 静止连续帧数（连续几帧白点不动 => 误点：光源/背景反光）
+    private var smoothed: PointF? = null  // v2.25 EMA 平滑输出
+    private val emaAlpha = 0.65f      // v2.25 EMA 平滑系数（越大越跟手）
 
     data class Candidate(
         val point: PointF,
@@ -64,11 +67,30 @@ class ShuttleTracker(
         val selected = selectCandidate(candidates)
         if (selected == null) {
             missingFrames++
-            if (missingFrames > maxMissingFrames) lastValid = null
+            if (missingFrames > maxMissingFrames) { lastValid = null; staticStreak = 0 }
             return null
         }
 
-        // 异常点过滤：跳跃过大或偏离预测太远
+        // v2.25 静止误检过滤：球每一帧都明显移动，连续 ≥3 帧几乎不动 => 判为光源/背景反光误点
+        if (trajectory.isNotEmpty()) {
+            val last = trajectory.last()
+            val moved = hypot(selected.point.x - last.x, selected.point.y - last.y)
+            if (moved < 2f) {
+                staticStreak++
+                if (staticStreak >= 3) {
+                    // 静止误检：清空轨迹，避免把灯光当球
+                    trajectory.clear()
+                    lastValid = null
+                    staticStreak = 0
+                    missingFrames = 0
+                    return null
+                }
+            } else {
+                staticStreak = 0
+            }
+        }
+
+        // 异常点过滤：跳跃过大或偏离预测太远（v2.25 搜索窗口按球速自适应放大，快球允许多跳）
         if (trajectory.isNotEmpty()) {
             val last = trajectory.last()
             val jump = hypot(selected.point.x - last.x, selected.point.y - last.y)
@@ -78,8 +100,9 @@ class ShuttleTracker(
             }
             val predicted = predictNext()
             if (predicted != null) {
+                val gate = adaptiveGate(selected.point, predicted)
                 val predDist = hypot(selected.point.x - predicted.x, selected.point.y - predicted.y)
-                if (predDist > predictionGatePixels && missingFrames <= maxMissingFrames) {
+                if (predDist > gate && missingFrames <= maxMissingFrames) {
                     missingFrames++
                     return null
                 }
@@ -89,7 +112,18 @@ class ShuttleTracker(
         trajectory.addLast(selected.point)
         lastValid = selected.point
         missingFrames = 0
-        return selected.point
+        // v2.25 EMA 平滑：输出更稳的球心，减小单帧抖动
+        smoothed = if (smoothed == null) selected.point else PointF(
+            smoothed!!.x + (selected.point.x - smoothed!!.x) * emaAlpha,
+            smoothed!!.y + (selected.point.y - smoothed!!.y) * emaAlpha
+        )
+        return smoothed
+    }
+
+    /** v2.25 自适应搜索窗口：球越快（预测位移越大），允许的偏差门限越大 */
+    private fun adaptiveGate(current: PointF, predicted: PointF): Float {
+        val speed = hypot(current.x - predicted.x, current.y - predicted.y)
+        return predictionGatePixels + speed * 1.5f
     }
 
     private fun selectCandidate(candidates: List<Candidate>): Candidate? {

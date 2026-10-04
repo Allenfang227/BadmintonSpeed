@@ -16,6 +16,7 @@ import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import com.badmintonspeed.app.analysis.Homography
+import com.badmintonspeed.app.analysis.PoseKeyPoint
 import com.badmintonspeed.app.domain.AnalysisResult
 import com.badmintonspeed.app.domain.HitAnalysis
 import com.badmintonspeed.app.domain.PoseFrameData
@@ -104,24 +105,35 @@ fun Court3DView(
         drawLine(Color(0x55FFFFFF), project(0.46f, 0f, 0f), project(0.46f, L, 0f), 0.8f)
         drawLine(Color(0x55FFFFFF), project(5.64f, 0f, 0f), project(5.64f, L, 0f), 0.8f)
 
-        // ---- 球网（加粗 + 立柱 + 标注，用户要求"加上球网的标注"） ----
+        // ---- 球网（加粗 + 立柱 + 网孔，用户要求"加上球网的标注"，v2.25 加网格纹理更醒目） ----
         val netY = 6.70f
-        val netP1 = project(0f, netY, 0.3f)
-        val netP2 = project(W, netY, 0.3f)
-        drawLine(Primary, netP1, netP2, 6f, cap = StrokeCap.Round)
+        val netP1 = project(0f, netY, 0.35f)
+        val netP2 = project(W, netY, 0.35f)
+        drawLine(Primary, netP1, netP2, 8f, cap = StrokeCap.Round)
         // 网下沿 + 两侧立柱
-        drawLine(Color(0x99FFFFFF), project(0f, netY, 0f), project(W, netY, 0f), 1f)
-        drawLine(Primary, project(0f, netY, 0f), netP1, 4f)
-        drawLine(Primary, project(W, netY, 0f), netP2, 4f)
+        drawLine(Color(0x99FFFFFF), project(0f, netY, 0f), project(W, netY, 0f), 1.5f)
+        drawLine(Primary, project(0f, netY, 0f), netP1, 5f)
+        drawLine(Primary, project(W, netY, 0f), netP2, 5f)
+        // v2.25 网孔纹理：沿网横向等分画垂直短线（模拟网眼），让网一眼可见
+        val meshSegs = 7
+        for (i in 1 until meshSegs) {
+            val fx = W * i / meshSegs
+            drawLine(
+                Color(0x88FFFFFF),
+                project(fx, netY, 0f),
+                project(fx, netY, 0.30f),
+                1f
+            )
+        }
 
-        // ---- v2.12 空间立体：当前进度附近的运动员也映射进 3D 场地（脚部→场地坐标，竖线表示站姿） ----
+        // ---- v2.25 空间立体：完整 33 点骨骼映射进 3D 场地（脚部→场地坐标，全身骨架连线） ----
         if (poseFrames.isNotEmpty() && result.court != null) {
             val tNow = progressMs / 1000.0
             val snap = poseFrames.lastOrNull { it.timeSec <= tNow + 0.03 }
             if (snap != null) {
                 val h = result.court.homography
                 for (skel in snap.skeletons) {
-                    // 脚部点：优先脚跟(29/30)，其次脚踝(27/28)，再退化为关键点中 y 最大（最下）的点
+                    // 脚部锚点：脚跟(29/30)→脚踝(27/28)→最下可见点
                     val footIdx = when {
                         (skel.points.getOrNull(29)?.visibility ?: 0f) > 0.3f -> 29
                         (skel.points.getOrNull(30)?.visibility ?: 0f) > 0.3f -> 30
@@ -129,18 +141,37 @@ fun Court3DView(
                         (skel.points.getOrNull(28)?.visibility ?: 0f) > 0.3f -> 28
                         else -> (skel.points.indices.maxByOrNull { skel.points[it].visibility } ?: 0)
                     }
-                    val headIdx = if ((skel.points.getOrNull(0)?.visibility ?: 0f) > 0.3f) 0
-                                  else (skel.points.indices.minByOrNull { skel.points[it].y } ?: 0)
                     val foot = skel.points.getOrNull(footIdx) ?: continue
-                    val head = skel.points.getOrNull(headIdx) ?: continue
                     if (foot.visibility <= 0.1f) continue
-                    val c = Homography.pixelToCourt(h, foot.x, foot.y)
-                    // 球员 z=0 地面 + 身高约1.6m 头部（把像素高度映射进 3D 空间）
-                    val headH = (head.y - foot.y).coerceIn(0f, 400f) / 400f * 1.6f
-                    val p1 = project(c.x, c.y, 0f)
-                    val p2 = project(c.x, c.y, headH.coerceAtLeast(0.5f))
-                    drawLine(Color(0xFF22D3EE).copy(alpha = 0.9f), p1, p2, 3f)
-                    drawCircle(Color(0xFF67E8F9), radius = 4f, center = p2)
+                    val footCourt = Homography.pixelToCourt(h, foot.x, foot.y)
+                    // 身高基准：可见关键点中最高点→头
+                    val vis = skel.points.filter { it.visibility > 0.3f }
+                    if (vis.isEmpty()) continue
+                    val topY = vis.minOf { it.y }
+                    val heightPx = (foot.y - topY).coerceIn(0f, 400f)
+                    fun p3d(pt: PoseKeyPoint?): Offset? {
+                        if (pt == null || pt.visibility <= 0.2f) return null
+                        val c = Homography.pixelToCourt(h, pt.x, pt.y)
+                        val z = (foot.y - pt.y).coerceIn(-50f, 400f) / heightPx.coerceAtLeast(1f) * 1.6f
+                        return project(c.x, c.y, z.coerceAtLeast(0f))
+                    }
+                    // 画完整骨架连线（头-肩-肘-腕 / 髋-膝-踝 / 躯干）
+                    val conn = arrayOf(
+                        0 to 7, 7 to 11, 11 to 12, 12 to 8, 8 to 0,   // 头肩环
+                        11 to 13, 13 to 15, 12 to 14, 14 to 16,       // 上肢
+                        11 to 23, 12 to 24, 23 to 24,                 // 躯干
+                        23 to 25, 25 to 27, 27 to 29, 24 to 26, 26 to 28, 28 to 30 // 下肢
+                    )
+                    for ((a, b) in conn) {
+                        val pa = p3d(skel.points.getOrNull(a)) ?: continue
+                        val pb = p3d(skel.points.getOrNull(b)) ?: continue
+                        drawLine(Color(0xFF22D3EE).copy(alpha = 0.9f), pa, pb, 2.5f)
+                    }
+                    // 关节点
+                    for (pt in skel.points) {
+                        val pp = p3d(pt) ?: continue
+                        drawCircle(Color(0xFF67E8F9), radius = 3f, center = pp)
+                    }
                 }
             }
         }

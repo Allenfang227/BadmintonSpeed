@@ -24,6 +24,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -32,11 +33,13 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.gestures.detectDragGestures
 import com.badmintonspeed.app.analysis.VideoFrameExtractor
 import com.badmintonspeed.app.ui.MainViewModel
 import com.badmintonspeed.app.ui.theme.OnSurfaceVariant
@@ -54,6 +57,29 @@ import java.io.File
 @Composable
 fun SettingsScreen(vm: MainViewModel) {
     val s = vm.settings
+    // v2.25 修复：prefs 写入不触发重组，用本地可观察状态桥接，开关才能即时点击切换
+    var showCourt by remember { mutableStateOf(s.showVirtualCourt) }
+    var d1Shot by remember { mutableStateOf(s.data1ShotSpeed) }
+    var d1Live by remember { mutableStateOf(s.data1LiveSpeed) }
+    var d1Hit by remember { mutableStateOf(s.data1HitType) }
+    var d1InOut by remember { mutableStateOf(s.data1InOut) }
+    var d2Shot by remember { mutableStateOf(s.data2ShotSpeed) }
+    var d2Live by remember { mutableStateOf(s.data2LiveSpeed) }
+    var d2Hit by remember { mutableStateOf(s.data2HitType) }
+    var d2InOut by remember { mutableStateOf(s.data2InOut) }
+    fun saveCourt(v: Boolean) { showCourt = v; s.showVirtualCourt = v }
+    fun saveD1(shot: Boolean? = null, live: Boolean? = null, hit: Boolean? = null, inOut: Boolean? = null) {
+        shot?.let { d1Shot = it; s.data1ShotSpeed = it }
+        live?.let { d1Live = it; s.data1LiveSpeed = it }
+        hit?.let { d1Hit = it; s.data1HitType = it }
+        inOut?.let { d1InOut = it; s.data1InOut = it }
+    }
+    fun saveD2(shot: Boolean? = null, live: Boolean? = null, hit: Boolean? = null, inOut: Boolean? = null) {
+        shot?.let { d2Shot = it; s.data2ShotSpeed = it }
+        live?.let { d2Live = it; s.data2LiveSpeed = it }
+        hit?.let { d2Hit = it; s.data2HitType = it }
+        inOut?.let { d2InOut = it; s.data2InOut = it }
+    }
 
     Row(Modifier.fillMaxSize()) {
         // ---- 中间画面区（实景 + 虚拟场地示意） ----
@@ -94,7 +120,7 @@ fun SettingsScreen(vm: MainViewModel) {
                     } ?: Box(Modifier.fillMaxSize().background(Color(0xFF10221A)))
 
                     // 虚拟场地示意（图4：标注 360°拖动旋转 / IN-OUT / LIVE SPEED）
-                    if (s.showVirtualCourt) {
+                    if (showCourt) {
                         CourtPreview(Modifier.fillMaxSize())
                     }
 
@@ -141,27 +167,27 @@ fun SettingsScreen(vm: MainViewModel) {
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text("显示虚拟场地", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Medium)
-                GreenSwitch(checked = s.showVirtualCourt, onCheckedChange = { s.showVirtualCourt = it })
+                GreenSwitch(checked = showCourt, onCheckedChange = { saveCourt(it) })
             }
             Spacer(Modifier.height(28.dp))
 
             // 数据1
             DataPanel(
                 title = "数据1",
-                shot = s.data1ShotSpeed, onShot = { s.data1ShotSpeed = it },
-                live = s.data1LiveSpeed, onLive = { s.data1LiveSpeed = it },
-                hit = s.data1HitType, onHit = { s.data1HitType = it },
-                inOut = s.data1InOut, onInOut = { s.data1InOut = it }
+                shot = d1Shot, onShot = { saveD1(shot = it) },
+                live = d1Live, onLive = { saveD1(live = it) },
+                hit = d1Hit, onHit = { saveD1(hit = it) },
+                inOut = d1InOut, onInOut = { saveD1(inOut = it) }
             )
             Spacer(Modifier.height(20.dp))
 
             // 数据2
             DataPanel(
                 title = "数据2",
-                shot = s.data2ShotSpeed, onShot = { s.data2ShotSpeed = it },
-                live = s.data2LiveSpeed, onLive = { s.data2LiveSpeed = it },
-                hit = s.data2HitType, onHit = { s.data2HitType = it },
-                inOut = s.data2InOut, onInOut = { s.data2InOut = it }
+                shot = d2Shot, onShot = { saveD2(shot = it) },
+                live = d2Live, onLive = { saveD2(live = it) },
+                hit = d2Hit, onHit = { saveD2(hit = it) },
+                inOut = d2InOut, onInOut = { saveD2(inOut = it) }
             )
         }
     }
@@ -215,22 +241,32 @@ private fun SettingSwitchRow(label: String, checked: Boolean, onCheckedChange: (
     }
 }
 
-/** 透视球场示意（3D 场地）：双打场地 6.10m x 13.40m */
+/** 透视球场示意（3D 场地）：双打场地 6.10m x 13.40m。v2.25：支持横向拖动 360° 旋转 */
 @Composable
 private fun CourtPreview(modifier: Modifier) {
-    Canvas(modifier) {
+    // v2.25 场地可拖动：横向拖动绕竖轴旋转（伪 3D 透视，cos 压缩 x）
+    var yawDeg by remember { mutableStateOf(0f) }
+    Canvas(modifier.pointerInput(Unit) {
+        detectDragGestures { change, dragAmount ->
+            change.consume()
+            yawDeg = (yawDeg + dragAmount.x * 0.45f) % 360f
+        }
+    }) {
         val w = size.width
         val h = size.height
         val cx = w / 2f
         val courtTop = h * 0.18f
         val courtBottom = h * 0.82f
         val courtW = w * 0.42f
+        // yaw 引起的横向压缩：0° 正面，±90° 侧面
+        val yawRad = Math.toRadians(yawDeg.toDouble())
+        val cosYaw = kotlin.math.cos(yawRad).toFloat().coerceIn(0.18f, 1f)
 
         fun proj(xFrac: Float, yFrac: Float): Offset {
-            // 简单透视：x 线性，y 近大远小
+            // 简单透视：x 线性，y 近大远小；横向乘 cos(yaw) 模拟绕竖轴旋转
             val y = courtTop + (courtBottom - courtTop) * yFrac
             val scaleY = 0.65f + 0.35f * yFrac
-            val x = cx + (xFrac - 0.5f) * courtW * scaleY
+            val x = cx + (xFrac - 0.5f) * courtW * scaleY * cosYaw
             return Offset(x, y)
         }
 

@@ -433,7 +433,7 @@ class VideoAnalyzer {
         // 帧差运动区域即运动员位置，白色衣服/球拍会被帧差和背景差分误检成球。
         // 提前算好球员框（膨胀1.6倍），球候选落入球员框内的直接丢弃。
         onStage(StageUpdate(AnalysisPhase.PLAYER, 0, 5f, 36f))
-        val playerRects = try { detectPlayers(framesAll) { stepIdx, pct ->
+        var playerRects = try { detectPlayers(framesAll) { stepIdx, pct ->
             onStage(StageUpdate(AnalysisPhase.PLAYER, stepIdx, pct, 35f + 4f * pct / 100f))
         } } catch (e: Exception) { emptyList() }
         onStage(StageUpdate(AnalysisPhase.PLAYER, 3, 100f, 39f, done = true))
@@ -506,6 +506,32 @@ class VideoAnalyzer {
                         if (!patch.isRecycled) patch.recycle()
                     }
                     if (extra.isNotEmpty()) boxes = boxes + extra
+                }
+                // v2.25 模型一优化：模糊小球放大重检。差分候选小（球只占几十像素、运动模糊）
+                // 时 YOLO 和模板都容易漏，把候选 patch 放大到 640 再喂 shuttle.onnx 局部重检。
+                // 只处理最多 2 个候选（局部推理成本可控），检出框映射回原图坐标补入。
+                if (boxes.isEmpty() && merged.isNotEmpty()) {
+                    val small = merged.filter { it.w < 16f || it.h < 16f }.take(2)
+                    for (c in small) {
+                        val patch = safeCrop(frame.bitmap, c.cx.toInt(), c.cy.toInt(), 64) ?: continue
+                        val p640 = Bitmap.createScaledBitmap(patch, 640, 640, true)
+                        val dets = try { detector.detectPatch(p640) } catch (e: Exception) { emptyList() }
+                        val in640 = dets.firstOrNull { it.conf > 0.05f } ?: dets.maxByOrNull { it.conf }
+                        if (in640 != null) {
+                            // 640 尺度 → 原图：patch 放大系数 = 640/64，偏移 320（patch 中心即候选中心）
+                            val box = ShuttleOnnxDetector.Box(
+                                c.cx + (in640.cx - 320f) / 10f,
+                                c.cy + (in640.cy - 320f) / 10f,
+                                maxOf(4f, in640.w / 10f),
+                                maxOf(4f, in640.h / 10f),
+                                in640.conf
+                            )
+                            boxes = boxes + box
+                            break
+                        }
+                        if (!patch.isRecycled) patch.recycle()
+                        if (!p640.isRecycled) p640.recycle()
+                    }
                 }
             } else {
                 bgDetector.updateBackground(frame.bitmap) // 球出现后背景滚动自适应
@@ -588,15 +614,29 @@ class VideoAnalyzer {
         // 人员位置已在球检测前算好（playerRects），这里直接跑骨骼：
         // 使用 MediaPipe PoseLandmarker 官方 AI 模型（assets/models/pose_landmarker.task，多人 33 关键点）
         // v2.13 提速：检测频率 每6帧 -> 每10帧
+        // v2.25 人员检测优化：用骨架关键点（含手腕=球拍端）生成更精确的运动员外接框，
+        // 并入 playerRects（结果页显示 + 击球动作关联用），避免"白色衣服/球拍当球"的误检区域漏盖。
         onStage(StageUpdate(AnalysisPhase.PLAYER, 2, 5f, 88f))
         val poseFrames = ArrayList<PoseFrameData>()
+        val posePlayerRects = ArrayList<RectF>()   // v2.25 骨架外接框（比帧差框更贴人）
         val poseDetector = try { PoseDetector(context) } catch (e: Exception) { null }
         if (poseDetector != null) {
             for ((i, f) in framesAll.withIndex()) {
-                if (i % 10 == 0) {
+                // v2.25：骨骼采样 10→6 帧，让 3D/结果页骨架"一直随视频播放显示"
+                if (i % 6 == 0) {
                     val skels = poseDetector.detect(f.bitmap)
                     if (skels.isNotEmpty()) {
                         poseFrames.add(PoseFrameData(f.timeMs / 1000.0, f.index, skels))
+                        // v2.25：多人骨架 → 每人一个外接框（33 点包围盒，腕/肘覆盖球拍活动范围）
+                        for (skel in skels) {
+                            val vis = skel.points.filter { it.visibility > 0.4f }
+                            if (vis.isEmpty()) continue
+                            val minX = vis.minOf { it.x }
+                            val minY = vis.minOf { it.y }
+                            val maxX = vis.maxOf { it.x }
+                            val maxY = vis.maxOf { it.y }
+                            posePlayerRects.add(RectF(minX - 30f, minY - 20f, maxX + 30f, maxY + 30f))
+                        }
                     }
                 }
                 if (i % 20 == 0) {
@@ -630,6 +670,8 @@ class VideoAnalyzer {
             }
             poseDetector.close()
         }
+        // v2.25 人员检测优化：骨架外接框并入球员框（比帧差框更贴人，结果页显示/击球关联更准）
+        if (posePlayerRects.isNotEmpty()) playerRects = (playerRects + posePlayerRects)
         onStage(StageUpdate(AnalysisPhase.PLAYER, 3, 100f, 94f, done = true))
         delay(200)
 
@@ -663,6 +705,8 @@ class VideoAnalyzer {
         )
         val maxSpeedPoint = finalPoints.maxByOrNull { it.speedKmh ?: 0f }
         val frameAtMax = maxSpeedPoint?.frame ?: 0
+        // v2.25 模型七：高光规则引擎（球速>100 杀球高光 / 单回合>10 拍多拍高光 / 连续快速击球平抽高光）
+        val highlights = HighlightEngine.detect(hits)
         onStage(StageUpdate(AnalysisPhase.HIT, 2, 100f, 100f, done = true))
 
         AnalysisResult(
@@ -672,11 +716,12 @@ class VideoAnalyzer {
             hits = hits,
             summary = summary,
             analysisDurationMs = System.currentTimeMillis() - startTime,
-            appVersion = "2.24.0",
+            appVersion = "2.25.0",
             frameWidth = w,
             frameHeight = h,
             frameAtMaxSpeed = frameAtMax,
-            poseFrames = poseFrames
+            poseFrames = poseFrames,
+            highlights = highlights
         )
     }
 

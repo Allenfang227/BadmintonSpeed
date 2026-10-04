@@ -126,6 +126,8 @@ class HitDetector(
 
             // 3) 落点 IN/OUT：标准双打场地 6.10 x 13.40
             val inCourt = landP.courtX in 0f..6.10f && landP.courtY in 0f..13.40f
+            // v2.25 落点六分区（模型六：物理坐标映射）：左右 × 前/中/后
+            val zone = landZone(landP.courtX, landP.courtY)
 
             // ---- 击球动作识别（运动员区域关联）----
             var actionConfidence = 1f
@@ -193,7 +195,7 @@ class HitDetector(
                 }
             }
 
-            val type = classify(maxSpeed, angleDeg, jumpSmash && netCrossed)
+            val type = classify(maxSpeed, angleDeg, flightM, jumpSmash && netCrossed)
             hits.add(
                 HitAnalysis(
                     id = "hit_${String.format("%03d", hitNumber)}",
@@ -205,22 +207,44 @@ class HitDetector(
                     angleDeg = angleDeg,
                     trajectory = traj,
                     netCrossed = netCrossed,
-                    landSide = landSide
+                    landSide = landSide,
+                    landZone = zone
                 )
             )
         }
         return hits
     }
 
-    /** 规则版击球类型分类（文档 4.4.5 简化；v2.13 加骨骼跳杀强判） */
-    private fun classify(maxSpeedKmh: Float, angleDeg: Float, jumpSmash: Boolean): HitType {
+    /** v2.25 落点六分区（模型六）：x<3.05 左 / 右；前发球线 4.72、中线 6.70、双打后发球线 12.64 → 前/中/后 */
+    private fun landZone(courtX: Float, courtY: Float): String {
+        val side = if (courtX < 3.05f) "左" else "右"
+        val zone = when {
+            courtY <= 4.72f -> "前场"
+            courtY <= 12.64f -> "中场"
+            else -> "后场"
+        }
+        return "$side$zone"
+    }
+
+    /**
+     * v2.25 规则版击球类型分类（模型五 6 类：杀球/高远/吊/平抽/网前/挑球）。
+     * 输入：最高球速、击球方向角、飞行距离、是否跳杀过网。
+     */
+    private fun classify(maxSpeedKmh: Float, angleDeg: Float, flightM: Float, jumpSmash: Boolean): HitType {
         return when {
-            // 跳杀：运动员起跳 + 球已过网 => 强判杀球（即使速度没到 140 也算）
+            // 跳杀：运动员起跳 + 球已过网 => 强判杀球（即使速度没到 100 也算）
             jumpSmash && maxSpeedKmh >= 60f -> HitType.SMASH
-            maxSpeedKmh >= 140f -> HitType.SMASH
-            // 下方击球 -> 抛物线高远球（击球后球往高处飞，角度大）
-            maxSpeedKmh >= 80f && abs(angleDeg) > 60f -> HitType.CLEAR
-            maxSpeedKmh >= 80f -> HitType.DRIVE
+            // 杀球：球速 > 100 km/h（方案模型七高光规则同阈值）
+            maxSpeedKmh >= 100f -> HitType.SMASH
+            // 高远球：快且飞行距离长（≥4m，从一侧拉到另一侧）
+            maxSpeedKmh >= 80f && flightM >= 4.0f -> HitType.CLEAR
+            // 平抽球：中高速但距离近（贴网平推）
+            maxSpeedKmh >= 55f -> HitType.DRIVE
+            // 网前球：低速且距离很短（<2m，网前放小球）
+            flightM <= 2.0f -> HitType.NET
+            // 挑球：低速但打得很远（≥5m，低位挑起拉后场）
+            flightM >= 5.0f -> HitType.LIFT
+            // 其余中低速中距离：吊球（轻吊过网，弧线不高）
             else -> HitType.DROP
         }
     }

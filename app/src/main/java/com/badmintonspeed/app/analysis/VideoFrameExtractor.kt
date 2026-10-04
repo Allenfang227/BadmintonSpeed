@@ -85,7 +85,7 @@ class VideoFrameExtractor {
         val frames = ArrayList<AnalyzedFrame>(min(sampleCount, 1500))
         if (outW > 0 && outH > 0) {
             try {
-                decodeSequentially(
+                val got = decodeSequentially(
                     file, outW, outH, stepUs, analyzedDurationMs,
                     maxFrames = 1500,
                     onProgress = onProgress,
@@ -95,6 +95,11 @@ class VideoFrameExtractor {
                         if (frames.size % 12 == 0) onPreview(bmp)
                     }
                 )
+                // v2.25 E001 加固：主通道一帧都没采到（静默失败，如 ImageReader 不匹配）→ 强制回退
+                if (got == 0) {
+                    frames.clear()
+                    fallbackSeekExtract(file, analysisFps, maxAnalysisSeconds, maxDimension, sampleCount, onProgress, onPreview, frames)
+                }
             } catch (e: Exception) {
                 // MediaCodec 通道失败（个别设备编码格式特殊）→ 回退 getFrameAtTime
                 frames.clear()
@@ -122,7 +127,7 @@ class VideoFrameExtractor {
         return ExtractedVideo(info, frames)
     }
 
-    /** MediaCodec 顺序解码主通道：解码一遍，按时间戳采样 */
+    /** MediaCodec 顺序解码主通道：解码一遍，按时间戳采样。返回采到的帧数（0=静默失败）。 */
     private fun decodeSequentially(
         file: File,
         outW: Int,
@@ -133,7 +138,8 @@ class VideoFrameExtractor {
         onProgress: (Int, Int) -> Unit,
         sampleCountTotal: Int,
         onFrame: (Int, Long, Bitmap) -> Unit
-    ) {
+    ): Int {
+        var frameCount = 0
         val extractor = MediaExtractor()
         try {
             extractor.setDataSource(file.absolutePath)
@@ -147,14 +153,20 @@ class VideoFrameExtractor {
             if (trackIdx < 0 || format == null) throw IllegalStateException("no video track")
             extractor.selectTrack(trackIdx)
 
-            val imageReader = ImageReader.newInstance(outW, outH, PixelFormat.RGBA_8888, 4)
+            // v2.25 E001 修复：ImageReader 必须匹配解码器实际输出尺寸（decW×decH），
+            // 否则 acquireLatestImage 拿不到帧（"不管传什么视频都提取 0 帧"）。
+            // 解码输出 buffer 尺寸 = 视频存储尺寸（旋转不改变 buffer 尺寸，由 KEY_ROTATION 标记），
+            // 拿到帧后再按 KEY_ROTATION 旋转并缩放到 outW/outH。
+            val decW = format.getInteger(MediaFormat.KEY_WIDTH)
+            val decH = format.getInteger(MediaFormat.KEY_HEIGHT)
+            val rotation = format.getInteger(MediaFormat.KEY_ROTATION, 0)
+            val imageReader = ImageReader.newInstance(decW, decH, PixelFormat.RGBA_8888, 2)
             val codec = MediaCodec.createDecoderByType(format.getString(MediaFormat.KEY_MIME)!!)
             try {
                 codec.configure(format, imageReader.surface, null, 0)
                 codec.start()
 
                 var nextSampleUs = 0L
-                var frameCount = 0
                 var inputDone = false
                 var outputDone = false
                 val info = MediaCodec.BufferInfo()
@@ -204,7 +216,20 @@ class VideoFrameExtractor {
                                 if (img != null) {
                                     val bmp = imageToBitmap(img)
                                     if (bmp != null) {
-                                        onFrame(frameCount, ptsUs / 1000, bmp)
+                                        // v2.25 E001 修复：竖拍视频（ROTATION 90/270）解码 buffer 是横置的，
+                                        // 旋转回显示方向后再缩放到输出尺寸
+                                        val rotated = if (rotation == 90 || rotation == 270) {
+                                            val m = android.graphics.Matrix()
+                                            m.postRotate(rotation.toFloat())
+                                            try { Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, m, true) }
+                                            catch (e: Exception) { bmp }
+                                        } else bmp
+                                        val finalBmp = if (rotated.width != outW || rotated.height != outH) {
+                                            Bitmap.createScaledBitmap(rotated, outW, outH, true)
+                                        } else rotated
+                                        if (finalBmp !== rotated && rotated !== bmp) rotated.recycle()
+                                        if (rotated !== bmp && finalBmp !== bmp) bmp.recycle()
+                                        onFrame(frameCount, ptsUs / 1000, finalBmp)
                                         frameCount++
                                         onProgress(frameCount, sampleCountTotal)
                                     }
@@ -231,6 +256,7 @@ class VideoFrameExtractor {
         } finally {
             extractor.release()
         }
+        return frameCount
     }
 
     /** Image(RGBA_8888) → Bitmap：单平面直接拷贝 */

@@ -243,22 +243,43 @@ fun ResultScreen(vm: MainViewModel) {
                         Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        SpeedTag("SHOT SPEED", shotSpeed)
-                        Spacer(Modifier.width(14.dp))
-                        SpeedTag("LIVE SPEED", liveSpeed)
-                        Spacer(Modifier.width(10.dp))
+                        // v2.25：数据叠加按「画面设置」开关过滤（出拍速度/实时速度/击球类型/界内界外）
+                        val st = vm.settings
+                        if (st.data1ShotSpeed) {
+                            SpeedTag("SHOT SPEED", shotSpeed)
+                            Spacer(Modifier.width(14.dp))
+                        }
+                        if (st.data1LiveSpeed) {
+                            SpeedTag("LIVE SPEED", liveSpeed)
+                            Spacer(Modifier.width(10.dp))
+                        }
                         // IN/OUT 落点判定（用户要求：选了设置选项后显示 in 和 out）
-                        Text(
-                            text = if (isIn) "IN" else "OUT",
-                            color = if (isIn) Color(0xFF4ADE80) else Color(0xFFEF4444),
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Black
-                        )
+                        if (st.data1InOut) {
+                            Text(
+                                text = if (isIn) "IN" else "OUT",
+                                color = if (isIn) Color(0xFF4ADE80) else Color(0xFFEF4444),
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Black
+                            )
+                        }
+                        // v2.25 击球类型（模型五 6 类：杀球/高远/吊/平抽/网前/挑球）
+                        if (currentHit != null && st.data1HitType) {
+                            Spacer(Modifier.width(8.dp))
+                            Surface(shape = RoundedCornerShape(8.dp), color = Color(0x2233D1FF)) {
+                                Text(
+                                    text = currentHit.hitType.displayName,
+                                    color = Color(0xFF8BE9FD),
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                )
+                            }
+                        }
                         // v2.13 双场区 + 过网标记（"视频截分成对面和这边两个场区"）
                         if (currentHit != null) {
                             Spacer(Modifier.width(6.dp))
                             Text(
-                                text = "${if (currentHit.netCrossed) "过网 " else ""}${currentHit.landSide}区落点",
+                                text = "${if (currentHit.netCrossed) "过网 " else ""}${currentHit.landSide}区${if (currentHit.landZone.isNotEmpty()) " · ${currentHit.landZone}" else ""}落点",
                                 color = Color(0xFF94A3B8),
                                 fontSize = 12.sp,
                                 fontWeight = FontWeight.Medium
@@ -297,6 +318,34 @@ fun ResultScreen(vm: MainViewModel) {
                 .background(Color(0xEE08100C))
                 .padding(horizontal = 24.dp, vertical = 10.dp)
         ) {
+            // v2.25 高光片段横条（模型七规则引擎：杀球>100km/h / 多拍>10拍 / 连续快速对抽）
+            if (result.highlights.isNotEmpty()) {
+                androidx.compose.foundation.lazy.LazyRow(
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 6.dp),
+                    horizontalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp)
+                ) {
+                    items(result.highlights.size) { hi ->
+                        val hl = result.highlights[hi]
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = when (hl.type) {
+                                "杀球" -> Color(0x66EF4444)
+                                "多拍" -> Color(0x6633D1FF)
+                                else -> Color(0x66F59E0B)
+                            },
+                            onClick = { seekTo((hl.startSec * 1000).toLong()) }
+                        ) {
+                            Text(
+                                text = "${hl.type}高光 ${"%.1f".format(hl.startSec)}s ${hl.desc}",
+                                color = Color.White,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Medium,
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
+                            )
+                        }
+                    }
+                }
+            }
             // 进度条
             Slider(
                 value = progressMs.toFloat(),
@@ -490,11 +539,27 @@ private fun downloadResult(context: android.content.Context, result: AnalysisRes
 private fun buildReport(result: AnalysisResult): String {
     val sb = StringBuilder()
     sb.appendLine("杀球测速 BadmintonSpeed 分析报告")
-    sb.appendLine("版本：2.0")
+    sb.appendLine("版本：2.25")
     sb.appendLine("最高球速：${"%.1f".format(result.summary.maxSpeedKmh)} km/h")
     sb.appendLine("平均球速：${"%.1f".format(result.summary.avgSpeedKmh)} km/h")
     sb.appendLine("击球次数：${result.summary.totalHits}（其中杀球 ${result.summary.smashCount} 次）")
     sb.appendLine("轨迹点数：${result.trajectory.size}")
+    // v2.25 高光片段（模型七规则引擎）
+    if (result.highlights.isNotEmpty()) {
+        sb.appendLine()
+        sb.appendLine("--- 高光片段（规则引擎） ---")
+        result.highlights.forEach { hl ->
+            sb.appendLine("${hl.type}：${"%.1f".format(hl.startSec)}s ~ ${"%.1f".format(hl.endSec)}s（${hl.desc}）")
+        }
+    }
+    // v2.25 击球明细（6 类 + 六分区）
+    if (result.hits.isNotEmpty()) {
+        sb.appendLine()
+        sb.appendLine("--- 击球明细（类型 / 最高球速 / 落点 / 是否过网） ---")
+        result.hits.forEach { h ->
+            sb.appendLine("${h.id}：${h.hitType.displayName} ${"%.1f".format(h.maxSpeedKmh)} km/h，${h.landSide}区${if (h.landZone.isNotEmpty()) "·${h.landZone}" else ""}，${if (h.netCrossed) "过网" else "未过网"}")
+        }
+    }
     sb.appendLine()
     sb.appendLine("--- 轨迹点（帧, 时间s, 像素x, 像素y, 球速km/h, 场地x, 场地y） ---")
     result.trajectory.forEach { p ->
