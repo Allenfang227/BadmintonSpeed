@@ -24,16 +24,23 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.badmintonspeed.app.analysis.CourtAutoCalibrator
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import kotlin.math.hypot
 
 /**
- * v2.17 ROI 框选屏：在首帧上画凸多边形（≥4 点）框住目标场地。
- * 所有候选线段/关键点若落在多边形外直接丢弃——邻场线/广告/地板缝不再干扰。
- * 支持：双击撤销、双指缩放/拖动、完成确认。
+ * v2.26 ROI 框选屏（大幅改进）：
+ * 1) 进入自动识别场地 → 直接给出建议框（4 角点），不用从零画；
+ * 2) 四个角点可单指拖动微调（"框选好用"）；
+ * 3) 没有自动结果时再手动点击加点（≥4 点闭合）；
+ * 4) 双指缩放/拖动画面查看细节；点过的点可底部撤销。
  */
 @Composable
 fun RoiSelectScreen(
@@ -55,12 +62,27 @@ fun RoiSelectScreen(
     var panX by remember { mutableFloatStateOf(0f) }
     var panY by remember { mutableFloatStateOf(0f) }
     var lastGestureMs by remember { mutableLongStateOf(0L) }
+    var autoDetected by remember { mutableStateOf(false) }
+    var detecting by remember { mutableStateOf(true) }
+
+    // 进入页面自动跑一次场地识别，成功则预填建议框（核心改进：不用从零画）
+    LaunchedEffect(bmp) {
+        detecting = true
+        val auto = withContext(Dispatchers.Default) {
+            runCatching { CourtAutoCalibrator.calibrate(bmp, null) }.getOrNull()
+        }
+        detecting = false
+        if (auto != null && auto.size >= 4) {
+            points.clear()
+            points.addAll(auto)
+            autoDetected = true
+        }
+    }
 
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         Canvas(
             Modifier.fillMaxSize().pointerInput(Unit) {
                 detectTapGestures(
-                    // 单击立即加点：不用 onDoubleTap（双击延迟会让点击"没反应"）
                     onTap = { tap ->
                         if (System.currentTimeMillis() - lastGestureMs < 150) return@detectTapGestures
                         val fitScale = minOf(size.width / bmpW, size.height / bmpH)
@@ -77,11 +99,48 @@ fun RoiSelectScreen(
                     }
                 )
             }.pointerInput(Unit) {
-                detectTransformGestures { _, pan, zoom, _ ->
+                // 单指拖动角点微调 / 双指缩放平移（角点可拖 = "框选好用"的关键）
+                var dragIdx = -1
+                var lastPan = Offset.Zero
+                detectTransformGestures { centroid, pan, zoom, rotation ->
                     lastGestureMs = System.currentTimeMillis()
-                    scale = (scale * zoom).coerceIn(0.4f, 8f)
-                    panX += pan.x
-                    panY += pan.y
+                    val fitScale = minOf(size.width / bmpW, size.height / bmpH)
+                    val drawW = bmpW * fitScale * scale
+                    val drawH = bmpH * fitScale * scale
+                    val offX = (size.width - drawW) / 2f + panX
+                    val offY = (size.height - drawH) / 2f + panY
+                    val dPan = pan - lastPan
+                    lastPan = pan
+                    val isDrag = zoom <= 1.02f && kotlin.math.abs(rotation) <= 0.05f
+                    if (isDrag) {
+                        if (dragIdx < 0) {
+                            // 找到距离手指最近的角点（显示坐标 45px 内）
+                            var best = -1
+                            var bestD = 45f
+                            for (i in points.indices) {
+                                val px = offX + points[i].x * fitScale * scale
+                                val py = offY + points[i].y * fitScale * scale
+                                val dd = hypot((centroid.x - px).toDouble(), (centroid.y - py).toDouble()).toFloat()
+                                if (dd < bestD) { bestD = dd; best = i }
+                            }
+                            dragIdx = best
+                        }
+                        if (dragIdx >= 0) {
+                            // 拖动该角点（图像坐标）
+                            points[dragIdx] = PointF(
+                                points[dragIdx].x + dPan.x / (fitScale * scale),
+                                points[dragIdx].y + dPan.y / (fitScale * scale)
+                            )
+                        } else {
+                            panX += dPan.x
+                            panY += dPan.y
+                        }
+                    } else {
+                        dragIdx = -1
+                        scale = (scale * zoom).coerceIn(0.4f, 8f)
+                        panX += dPan.x
+                        panY += dPan.y
+                    }
                 }
             }
         ) {
@@ -98,13 +157,19 @@ fun RoiSelectScreen(
             // 画面边界虚线
             drawRect(color = Color(0x66FFFFFF), topLeft = Offset(offX, offY),
                 size = Size(drawW, drawH), style = Stroke(width = 2f))
-            // 已选顶点 + 连线
+            // 已选顶点 + 连线（拖动手柄：角点画大圆，可拖）
             val display = points.map { p -> Offset(offX + p.x * fitScale * scale, offY + p.y * fitScale * scale) }
             for ((i, pt) in display.withIndex()) {
                 val inside = points[i].x in 0f..bmpW && points[i].y in 0f..bmpH
                 val c = if (inside) Color(0xFF4FC3F7) else Color(0xFFFF6D00)
-                drawCircle(color = c, radius = 12f, center = pt, style = Stroke(width = 3f))
-                drawCircle(color = c, radius = 5f, center = pt)
+                drawCircle(color = c, radius = 14f, center = pt, style = Stroke(width = 3f))
+                drawCircle(color = c, radius = 6f, center = pt)
+                // 拖动提示
+                drawContext.canvas.nativeCanvas.drawText(
+                    if (autoDetected && points.size == 4 && i == 0) "拖动圆点微调" else "",
+                    pt.x + 16f, pt.y - 14f,
+                    android.graphics.Paint().apply { color = 0xFFFFFFFF.toInt(); textSize = 22f; isAntiAlias = true }
+                )
             }
             if (display.size >= 2) {
                 for (i in 0 until display.size - 1) {
@@ -114,7 +179,7 @@ fun RoiSelectScreen(
             if (display.size >= 4) {
                 drawLine(color = Color(0xFF4FC3F7), start = display.last(), end = display.first(), strokeWidth = 3f)
             }
-            // 场地线参考：预览帧叠加的半透明提示
+            // 场地线参考提示
             drawCircle(color = Color(0xFFFFEB3B), radius = 6f, center = Offset(offX + 0.3f * drawW, offY + 0.3f * drawH))
         }
         // 底部操作栏
@@ -122,10 +187,17 @@ fun RoiSelectScreen(
             Modifier.fillMaxWidth().align(Alignment.BottomCenter).padding(12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text("已选 ${points.size} 点（≥4 点闭合，单点加点，底部按钮撤销）", Modifier.weight(1f), fontSize = 13.sp,
-                color = Color(0xFFB0BEC5))
+            Text(
+                when {
+                    detecting -> "正在自动识别场地…"
+                    autoDetected -> "已自动识别，拖动圆点微调后点「完成」"
+                    else -> "未自动识别到场地，请手动点击场地 4 个角点"
+                },
+                Modifier.weight(1f), fontSize = 13.sp, color = Color(0xFFB0BEC5)
+            )
             if (points.isNotEmpty()) {
-                Button(onClick = { points.removeAt(points.size - 1) }, Modifier.padding(end = 8.dp)) { Text("撤销") }
+                Button(onClick = { points.removeAt(points.size - 1); autoDetected = false },
+                    Modifier.padding(end = 8.dp)) { Text("撤销") }
             }
             Button(
                 onClick = { if (points.size >= 4) onSubmit(points.toList()) },

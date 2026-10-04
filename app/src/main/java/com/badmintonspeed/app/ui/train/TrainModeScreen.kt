@@ -18,6 +18,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -134,84 +135,129 @@ fun TrainModeScreen(onOpenFiles: () -> Unit, onBack: () -> Unit) {
         }
         Spacer(Modifier.height(20.dp))
 
-        Row(Modifier.fillMaxWidth().weight(1f)) {
-            // ============ 左栏：模型文件管理 ============
-            Card(
-                Modifier.weight(1f).fillMaxHeight().padding(end = 12.dp),
-                shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(containerColor = Surface)
-            ) {
-                Column(Modifier.fillMaxSize().padding(20.dp)) {
-                    Text("模型文件", color = Color.White, fontSize = 17.sp)
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        "训练样本与模型保存在：\nDownload/BadmintonSpeed/\n（labels 场地标注 / ball_samples 球样本 / ball_model 训练产物：templates.json + shuttle_user.onnx）",
-                        color = Color(0xFF90A4AE), fontSize = 13.sp, lineHeight = 19.sp
-                    )
-                    Spacer(Modifier.height(20.dp))
-                    Button(onClick = onOpenFiles, Modifier.fillMaxWidth()) {
-                        Text("打开模型目录（查看/转发）")
+        // v2.26 适配手机竖屏：竖屏上下堆叠可滚动，横屏左右分栏
+        val cfg = LocalConfiguration.current
+        val landscape = cfg.screenWidthDp > cfg.screenHeightDp
+
+        if (landscape) {
+            // ============ 横屏：左右分栏 ============
+            Row(Modifier.fillMaxWidth().weight(1f)) {
+                Card(
+                    Modifier.weight(1f).fillMaxHeight().padding(end = 12.dp),
+                    shape = RoundedCornerShape(20.dp),
+                    colors = CardDefaults.cardColors(containerColor = Surface)
+                ) {
+                    Column(Modifier.fillMaxSize().padding(20.dp)) {
+                        Text("模型文件", color = Color.White, fontSize = 17.sp)
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "训练样本与模型保存在：\nDownload/BadmintonSpeed/\n（labels 场地标注 / ball_samples 球样本 / ball_model 训练产物：templates.json + shuttle_user.onnx）",
+                            color = Color(0xFF90A4AE), fontSize = 13.sp, lineHeight = 19.sp
+                        )
+                        Spacer(Modifier.height(20.dp))
+                        Button(onClick = onOpenFiles, Modifier.fillMaxWidth()) { Text("打开模型目录（查看/转发）") }
+                        Spacer(Modifier.height(10.dp))
+                        Button(onClick = {
+                            val ok = CourtModelRepo.exportToPublic(context, null)
+                            log += if (ok) "\n已同步全部文件到公共目录" else "\n公共目录同步失败"
+                        }, Modifier.fillMaxWidth()) { Text("同步到公共目录") }
+                        Spacer(Modifier.height(10.dp))
+                        Button(onClick = {
+                            val uri = CourtModelRepo.exportZip(context)
+                            if (uri != null) {
+                                val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                    type = "application/zip"
+                                    putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                                    addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
+                                context.startActivity(android.content.Intent.createChooser(send, "分享模型包"))
+                            } else log += "\n打包失败"
+                        }, Modifier.fillMaxWidth()) { Text("打包全部为 zip 并分享") }
                     }
-                    Spacer(Modifier.height(10.dp))
-                    Button(onClick = {
-                        val ok = CourtModelRepo.exportToPublic(context, null)
-                        log += if (ok) "\n已同步全部文件到公共目录" else "\n公共目录同步失败"
-                    }, Modifier.fillMaxWidth()) {
-                        Text("同步到公共目录")
-                    }
-                    Spacer(Modifier.height(10.dp))
-                    Button(onClick = {
-                        val uri = CourtModelRepo.exportZip(context)
-                        if (uri != null) {
-                            val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
-                                type = "application/zip"
-                                putExtra(android.content.Intent.EXTRA_STREAM, uri)
-                                addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                            }
-                            context.startActivity(android.content.Intent.createChooser(send, "分享模型包"))
-                        } else log += "\n打包失败"
-                    }, Modifier.fillMaxWidth()) {
-                        Text("打包全部为 zip 并分享")
+                }
+                Card(
+                    Modifier.weight(1.4f).fillMaxHeight().padding(start = 12.dp),
+                    shape = RoundedCornerShape(20.dp),
+                    colors = CardDefaults.cardColors(containerColor = Surface)
+                ) {
+                    Column(Modifier.fillMaxSize().padding(20.dp)) {
+                        Text("训练流程（正确使用方法）", color = Color.White, fontSize = 17.sp)
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "① 导入图片：选择红框标注好羽毛球的照片，解析红框→裁剪球区域→存入样本库（只入库，不训练）\n② 开始训练：用样本库中已有样本训练，生成模板模型（可反复训练叠加）\n③ 导出 ONNX：训练完成后把模型导出为 shuttle_user.onnx，实测自动调用",
+                            color = Color(0xFF90A4AE), fontSize = 13.sp, lineHeight = 19.sp
+                        )
+                        Spacer(Modifier.height(16.dp))
+                        Button(onClick = { picker.launch("image/*") }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("① 导入图片（红框标注球）") }
+                        Spacer(Modifier.height(10.dp))
+                        Button(onClick = { doTrain() }, enabled = !busy && sampleCount > 0, modifier = Modifier.fillMaxWidth()) { Text("② 开始训练（$sampleCount 个样本）") }
+                        Spacer(Modifier.height(10.dp))
+                        OutlinedButton(onClick = { doExportOnnx() }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("③ 导出 ONNX（生成 shuttle_user.onnx）") }
+                        Spacer(Modifier.height(14.dp))
+                        Text(log, color = Color(0xFFECEFF1), fontSize = 12.sp, lineHeight = 17.sp,
+                            modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState()))
                     }
                 }
             }
-
-            // ============ 右栏：训练流程（三个独立功能，按专业路径） ============
-            Card(
-                Modifier.weight(1.4f).fillMaxHeight().padding(start = 12.dp),
-                shape = RoundedCornerShape(20.dp),
-                colors = CardDefaults.cardColors(containerColor = Surface)
-            ) {
-                Column(Modifier.fillMaxSize().padding(20.dp)) {
-                    Text("训练流程（正确使用方法）", color = Color.White, fontSize = 17.sp)
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        "① 导入图片：选择红框标注好羽毛球的照片，解析红框→裁剪球区域→存入样本库（只入库，不训练）\n② 开始训练：用样本库中已有样本训练，生成模板模型（可反复训练叠加）\n③ 导出 ONNX：训练完成后把模型导出为 shuttle_user.onnx，实测自动调用",
-                        color = Color(0xFF90A4AE), fontSize = 13.sp, lineHeight = 19.sp
-                    )
-                    Spacer(Modifier.height(16.dp))
-
-                    // ---- 功能按钮区：三个独立功能 ----
-                    Button(onClick = { picker.launch("image/*") }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
-                        Text("① 导入图片（红框标注球）")
+        } else {
+            // ============ 竖屏：上下堆叠可滚动 ============
+            Column(Modifier.fillMaxWidth().weight(1f).verticalScroll(rememberScrollState())) {
+                Card(
+                    Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(20.dp),
+                    colors = CardDefaults.cardColors(containerColor = Surface)
+                ) {
+                    Column(Modifier.fillMaxSize().padding(20.dp)) {
+                        Text("模型文件", color = Color.White, fontSize = 17.sp)
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "训练样本与模型保存在：\nDownload/BadmintonSpeed/\n（labels 场地标注 / ball_samples 球样本 / ball_model 训练产物：templates.json + shuttle_user.onnx）",
+                            color = Color(0xFF90A4AE), fontSize = 13.sp, lineHeight = 19.sp
+                        )
+                        Spacer(Modifier.height(20.dp))
+                        Button(onClick = onOpenFiles, Modifier.fillMaxWidth()) { Text("打开模型目录（查看/转发）") }
+                        Spacer(Modifier.height(10.dp))
+                        Button(onClick = {
+                            val ok = CourtModelRepo.exportToPublic(context, null)
+                            log += if (ok) "\n已同步全部文件到公共目录" else "\n公共目录同步失败"
+                        }, Modifier.fillMaxWidth()) { Text("同步到公共目录") }
+                        Spacer(Modifier.height(10.dp))
+                        Button(onClick = {
+                            val uri = CourtModelRepo.exportZip(context)
+                            if (uri != null) {
+                                val send = android.content.Intent(android.content.Intent.ACTION_SEND).apply {
+                                    type = "application/zip"
+                                    putExtra(android.content.Intent.EXTRA_STREAM, uri)
+                                    addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                }
+                                context.startActivity(android.content.Intent.createChooser(send, "分享模型包"))
+                            } else log += "\n打包失败"
+                        }, Modifier.fillMaxWidth()) { Text("打包全部为 zip 并分享") }
                     }
-                    Spacer(Modifier.height(10.dp))
-                    Button(onClick = { doTrain() }, enabled = !busy && sampleCount > 0, modifier = Modifier.fillMaxWidth()) {
-                        Text("② 开始训练（${sampleCount} 个样本）")
+                }
+                Spacer(Modifier.height(14.dp))
+                Card(
+                    Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(20.dp),
+                    colors = CardDefaults.cardColors(containerColor = Surface)
+                ) {
+                    Column(Modifier.fillMaxSize().padding(20.dp)) {
+                        Text("训练流程（正确使用方法）", color = Color.White, fontSize = 17.sp)
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "① 导入图片：选择红框标注好羽毛球的照片，解析红框→裁剪球区域→存入样本库（只入库，不训练）\n② 开始训练：用样本库中已有样本训练，生成模板模型（可反复训练叠加）\n③ 导出 ONNX：训练完成后把模型导出为 shuttle_user.onnx，实测自动调用",
+                            color = Color(0xFF90A4AE), fontSize = 13.sp, lineHeight = 19.sp
+                        )
+                        Spacer(Modifier.height(16.dp))
+                        Button(onClick = { picker.launch("image/*") }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("① 导入图片（红框标注球）") }
+                        Spacer(Modifier.height(10.dp))
+                        Button(onClick = { doTrain() }, enabled = !busy && sampleCount > 0, modifier = Modifier.fillMaxWidth()) { Text("② 开始训练（$sampleCount 个样本）") }
+                        Spacer(Modifier.height(10.dp))
+                        OutlinedButton(onClick = { doExportOnnx() }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("③ 导出 ONNX（生成 shuttle_user.onnx）") }
+                        Spacer(Modifier.height(14.dp))
+                        Text(log, color = Color(0xFFECEFF1), fontSize = 12.sp, lineHeight = 17.sp,
+                            modifier = Modifier.fillMaxWidth())
                     }
-                    Spacer(Modifier.height(10.dp))
-                    OutlinedButton(onClick = { doExportOnnx() }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
-                        Text("③ 导出 ONNX（生成 shuttle_user.onnx）")
-                    }
-
-                    Spacer(Modifier.height(14.dp))
-                    Text(
-                        log,
-                        color = Color(0xFFECEFF1),
-                        fontSize = 12.sp,
-                        lineHeight = 17.sp,
-                        modifier = Modifier.fillMaxSize().verticalScroll(rememberScrollState())
-                    )
                 }
             }
         }
