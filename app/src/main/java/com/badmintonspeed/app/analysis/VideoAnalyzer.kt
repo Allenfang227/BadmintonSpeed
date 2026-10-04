@@ -239,9 +239,21 @@ class VideoAnalyzer {
         //  1) 视角固定 → 截取前10帧、中间10帧、后10帧 → 逐帧图片识别（背景色验证+长实线扫描）
         //  2) 多时间点投票：多数一致才采纳（"背景不在这种场地上就判误识别"）
         //  3) 全部失败 → 学习容器历史先验 → 仍失败报 E101（不再弹手动标定）
-        onStage(StageUpdate(AnalysisPhase.COURT, 0, 12f, 13f))
-        onPreviewFrame(frames.first().bitmap.copy(Bitmap.Config.ARGB_8888, true))
-        delay(120)
+        // v2.27.1 修复 E101 死循环：用户手动标定过 4 个角点（submitManualCourtCorners）后
+        // 重新分析时 manualCourtCorners 必须直接采用——此前该参数从未被读取，标定完又全自动
+        // 检测再失败 → 又弹 E101 → 无限循环。
+        var courtCornersPx: List<PointF>? = null
+        var anchorFrame = frames.first().bitmap
+        if (manualCourtCorners != null && isValidPrediction(manualCourtCorners, w, h)) {
+            courtCornersPx = manualCourtCorners
+            anchorFrame = frames.first().bitmap
+            onStage(StageUpdate(AnalysisPhase.COURT, 1, 100f, 29f))
+            onStage(StageUpdate(AnalysisPhase.COURT, 2, 100f, 30f))
+            onStage(StageUpdate(AnalysisPhase.COURT, 3, 100f, 31f))
+            onStage(StageUpdate(AnalysisPhase.COURT, 3, 100f, 32f, done = true))
+            onPreviewFrame(anchorFrame.copy(Bitmap.Config.ARGB_8888, true))
+            delay(150)
+        } else {
         val courtSamples = LinkedHashSet<Int>()
         val third = frames.size / 3
         // 前10帧段、中间10帧段、后10帧段（每段均匀取帧）
@@ -249,8 +261,6 @@ class VideoAnalyzer {
             val seg = (0 until minOf(10, frames.size)).map { (segStart + it * frames.size / 30).coerceIn(0, frames.size - 1) }.distinct()
             courtSamples.addAll(seg)
         }
-        var courtCornersPx: List<PointF>? = null
-        var anchorFrame = frames.first().bitmap
         val candidates = ArrayList<List<PointF>>()
         val sampleList = courtSamples.toList()
         // v2.15 E101 失败分类统计（A漏检/B误检/C拓扑错/D几何歪）：
@@ -343,6 +353,7 @@ class VideoAnalyzer {
                 )
             }
         }
+        } // v2.27.1: else 分支（全自动检测）闭合
         onStage(StageUpdate(AnalysisPhase.COURT, 3, 92f, 31f))
         // 把本次成功标定纳入学习容器（提高下次自动识别精准度）
         try {
@@ -716,7 +727,7 @@ class VideoAnalyzer {
             hits = hits,
             summary = summary,
             analysisDurationMs = System.currentTimeMillis() - startTime,
-            appVersion = "2.27.0",
+            appVersion = "2.27.1",
             frameWidth = w,
             frameHeight = h,
             frameAtMaxSpeed = frameAtMax,
