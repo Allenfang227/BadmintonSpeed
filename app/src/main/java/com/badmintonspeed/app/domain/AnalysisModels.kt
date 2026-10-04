@@ -100,11 +100,15 @@ enum class SpeedUnit(val displayName: String) {
     MPS("m/s")
 }
 
-/** 性能模式：决定分析帧率（手机本地 ONNX 推理受 CPU 限制，5/10/15fps 采样即可完整还原轨迹） */
+/**
+ * 性能模式：决定分析帧率。
+ * 麒麟9000S 为 1+3+4 八核（1×A77@2.62 + 3×A77@2.4 + 4×A55@1.8），
+ * 配合多线程并行 ONNX 推理可支撑高帧率采样，提升小目标羽毛球召回率。
+ */
 enum class PerformanceMode(val displayName: String, val analysisFps: Int) {
-    BATTERY_SAVER("省电模式", 5),
-    BALANCED("均衡模式", 10),
-    TURBO("极速模式", 15)
+    BATTERY_SAVER("省电模式", 10),
+    BALANCED("均衡模式", 20),
+    TURBO("极速模式", 30)
 }
 
 /**

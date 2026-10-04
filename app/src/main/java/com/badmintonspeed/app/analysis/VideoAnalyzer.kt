@@ -198,73 +198,110 @@ class VideoAnalyzer {
         onStage(StageUpdate(AnalysisPhase.COURT, 3, 100f, 28f, done = true))
         delay(250)
 
-        // ================= 阶段 4：羽毛球检测（28-78%，YOLO11 ONNX 真实检测） =================
+        // ================= 阶段 4：羽毛球检测（28-78%，多线程并行 YOLO + CV 兜底） =================
         onStage(StageUpdate(AnalysisPhase.SHUTTLE, 0, 5f, 30f))
-        val detector = ShuttleOnnxDetector(context)
+        val parallelDetector = ParallelShuttleDetector(context)
         val tracker = BallTracker()
         val rawPoints = ArrayList<BallPoint>()
         var lastBall: Pair<Float, Float>? = null
         var detectedFrames = 0
+        var cvFallbackFrames = 0
 
-        for ((i, frame) in framesAll.withIndex()) {
+        // 分批并行检测：每批 4 帧，利用麒麟9000S 多核并行推理
+        val batchSize = 4
+        val totalBatches = (framesAll.size + batchSize - 1) / batchSize
+
+        for (batchIdx in 0 until totalBatches) {
             yield()
-            val boxes = detector.detect(frame.bitmap, lastBall)
-            val blobs = detector.toBlobs(boxes)
-            val timeSec = frame.timeMs / 1000.0
-            val pos = tracker.update(blobs, frame.index, timeSec, w, h)
-            if (pos != null) {
-                detectedFrames++
-                lastBall = pos
-                val courtPos = Homography.pixelToCourt(homography, pos.first, pos.second)
-                rawPoints.add(
-                    BallPoint(
-                        frame = frame.index,
-                        timeSec = timeSec,
-                        x = pos.first,
-                        y = pos.second,
-                        confidence = boxes.firstOrNull()?.conf ?: 0.5f,
-                        courtX = courtPos.x,
-                        courtY = courtPos.y
+            val start = batchIdx * batchSize
+            val end = minOf(start + batchSize, framesAll.size)
+            val batchFrames = framesAll.subList(start, end)
+
+            // 为每帧构造 hint（用上一帧的球位置）
+            val hints = ArrayList<Pair<Float, Float>?>(batchFrames.size)
+            var hintCursor = lastBall
+            for (f in batchFrames) {
+                hints.add(hintCursor)
+                // hint 暂时保持，等检测结果回来再更新
+            }
+
+            // 多线程并行检测
+            val bitmaps = batchFrames.map { it.bitmap }
+            val results = parallelDetector.detectBatch(bitmaps, hints)
+
+            // 按帧序处理结果（跟踪必须串行）
+            for ((k, frame) in batchFrames.withIndex()) {
+                val res = results[k]
+                val boxes = res.boxes
+                if (res.usedCvFallback) cvFallbackFrames++
+                val blobs = boxes.map { b ->
+                    BallDetector.Blob(
+                        cx = b.cx, cy = b.cy, area = (b.w * b.h).toInt(),
+                        meanBrightness = 150f + 100f * b.conf, movingRatio = 1f,
+                        minX = (b.cx - b.w / 2f).toInt(), maxX = (b.cx + b.w / 2f).toInt(),
+                        minY = (b.cy - b.h / 2f).toInt(), maxY = (b.cy + b.h / 2f).toInt()
                     )
-                )
-            } else {
-                boxes.firstOrNull()?.let { lastBall = it.cx to it.cy }
-            }
-            // 实时预览帧（带球检测框），每约 10 帧刷新一次
-            if (i % 10 == 0) {
-                val bmp = frame.bitmap.copy(Bitmap.Config.ARGB_8888, true)
-                val bcv = Canvas(bmp)
-                for (b in boxes.take(3)) {
-                    val l = b.cx - b.w / 2f; val t = b.cy - b.h / 2f
-                    bcv.drawRect(l, t, l + b.w, t + b.h, ballPaint)
                 }
-                onPreviewFrame(bmp)
+                val timeSec = frame.timeMs / 1000.0
+                val pos = tracker.update(blobs, frame.index, timeSec, w, h)
+                if (pos != null) {
+                    detectedFrames++
+                    lastBall = pos
+                    val courtPos = Homography.pixelToCourt(homography, pos.first, pos.second)
+                    rawPoints.add(
+                        BallPoint(
+                            frame = frame.index,
+                            timeSec = timeSec,
+                            x = pos.first,
+                            y = pos.second,
+                            confidence = boxes.firstOrNull()?.conf ?: 0.5f,
+                            courtX = courtPos.x,
+                            courtY = courtPos.y
+                        )
+                    )
+                } else {
+                    boxes.firstOrNull()?.let { lastBall = it.cx to it.cy }
+                }
+
+                // 实时预览帧（每批第一帧刷新）
+                if (k == 0) {
+                    val bmp = frame.bitmap.copy(Bitmap.Config.ARGB_8888, true)
+                    val bcv = Canvas(bmp)
+                    for (b in boxes.take(3)) {
+                        val l = b.cx - b.w / 2f; val t = b.cy - b.h / 2f
+                        bcv.drawRect(l, t, l + b.w, t + b.h, ballPaint)
+                    }
+                    onPreviewFrame(bmp)
+                }
             }
-            // 步骤映射：前 40% 帧为"背景差分"（全帧扫描），后 60% 为"SVM分类"（跟踪筛选）
-            val stepIdx = if (i < framesAll.size * 0.4f) 0 else 1
-            val phasePct = 5f + 90f * (i.toFloat() / framesAll.size)
-            onStage(StageUpdate(AnalysisPhase.SHUTTLE, stepIdx, phasePct, 28f + 50f * (i.toFloat() / framesAll.size)))
+
+            // 进度上报
+            val stepIdx = if (batchIdx < totalBatches * 0.4f) 0 else 1
+            val phasePct = 5f + 90f * ((batchIdx + 1).toFloat() / totalBatches)
+            onStage(StageUpdate(AnalysisPhase.SHUTTLE, stepIdx, phasePct,
+                28f + 50f * ((batchIdx + 1).toFloat() / totalBatches)))
         }
-        detector.close()
+        parallelDetector.close()
         onStage(StageUpdate(AnalysisPhase.SHUTTLE, 1, 100f, 78f, done = true))
 
-        if (detectedFrames < 6) {
+        // 检出帧数门槛从 6 降到 4（高帧率下短击球也能凑够）
+        if (detectedFrames < 4) {
             throw AnalysisException(
                 AnalysisError(
                     code = "E201",
                     title = "羽毛球检测失败",
-                    detail = "AI 未能稳定识别出羽毛球：请确保羽毛球在画面中清晰可见（不要太小、不要和白色背景融合），且击球过程完整出现在画面内。",
-                    threshold = "检出帧 $detectedFrames / 总帧 ${framesAll.size}，需要检出 ≥ 6 帧"
+                    detail = "AI 未能稳定识别出羽毛球：请确保羽毛球在画面中清晰可见（不要太小、不要和白色背景融合），且击球过程完整出现在画面内。建议拉近镜头或换光线更好的场地。",
+                    threshold = "检出帧 $detectedFrames / 总帧 ${framesAll.size}（CV兜底 $cvFallbackFrames 帧），需要检出 ≥ 4 帧"
                 )
             )
         }
-        if (rawPoints.size < 6) {
+        if (rawPoints.size < 4) {
             throw AnalysisException(
                 AnalysisError(
                     code = "E202",
                     title = "轨迹跟踪不足",
                     detail = "虽然识别到了羽毛球，但连续轨迹过短，无法计算球速。请用更稳定的视角拍摄完整击球过程。",
-                    threshold = "连续轨迹点 ${rawPoints.size} / 需要 ≥ 6"
+                    threshold = "连续轨迹点 ${rawPoints.size} / 需要 ≥ 4"
                 )
             )
         }
@@ -325,7 +362,7 @@ class VideoAnalyzer {
             hits = hits,
             summary = summary,
             analysisDurationMs = System.currentTimeMillis() - startTime,
-            appVersion = "2.6.0",
+            appVersion = "2.7.0",
             frameWidth = w,
             frameHeight = h,
             frameAtMaxSpeed = frameAtMax
