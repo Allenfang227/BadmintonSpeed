@@ -28,5 +28,8 @@ object OrtSessions {
         OrtSession.SessionOptions().apply {
             setIntraOpNumThreads(intraThreads)
             setInterOpNumThreads(INTER_THREADS)
+            // 超线程增强：全图优化（常量折叠/算子融合）+ NNAPI（华为NPU）
+            setOptimizationLevel(OrtSession.SessionOptions.OptLevel.ALL_OPT)
+            runCatching { addNnapi() }
         }
 }
