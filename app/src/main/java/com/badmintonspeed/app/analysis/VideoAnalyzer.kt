@@ -184,6 +184,8 @@ class VideoAnalyzer {
         val learnedModel = try {
             BallLearner.loadModel(File(context.filesDir, "BadmintonSpeed/ball_model"))
         } catch (e: Exception) { null }
+        // v2.24：训练完导出的用户 ONNX 模型（优先于模板打分，缺失/失败自动回退）
+        val userOnnx = try { OnnxUserModel.load(context) } catch (e: Exception) { null }
         val startTime = System.currentTimeMillis()
 
         // ================= 阶段 1：先转格式/抽帧（0-10%，全程显示画面） =================
@@ -487,12 +489,19 @@ class VideoAnalyzer {
                 }
                 // v2.18 本地训练模型补检：红框标注训练出的羽毛球模板对运动白点打分，
                 // 高置信（>0.58）且不与现有候选重复的补入 boxes（球很小很糊时 YOLO 漏检的救星）
+                // v2.24：优先用训练完导出的用户 ONNX 模型打分（onnxruntime 推理），
+                // 导出失败/加载失败时回退 BallLearner 模板打分
                 if (learnedModel != null && merged.isNotEmpty()) {
                     val extra = ArrayList<ShuttleOnnxDetector.Box>()
                     for (c in merged) {
                         if (boxes.any { kotlin.math.hypot((it.cx - c.cx).toDouble(), (it.cy - c.cy).toDouble()) < 20.0 }) continue
                         val patch = safeCrop(frame.bitmap, c.cx.toInt(), c.cy.toInt(), 48) ?: continue
-                        val sc = BallLearner.match(patch, learnedModel)
+                        val sc = if (userOnnx != null) {
+                            val s = userOnnx.score(patch)
+                            if (s >= 0f) s else BallLearner.match(patch, learnedModel)
+                        } else {
+                            BallLearner.match(patch, learnedModel)
+                        }
                         if (sc > 0.58f) extra.add(c)
                         if (!patch.isRecycled) patch.recycle()
                     }
@@ -663,7 +672,7 @@ class VideoAnalyzer {
             hits = hits,
             summary = summary,
             analysisDurationMs = System.currentTimeMillis() - startTime,
-            appVersion = "2.23.0",
+            appVersion = "2.24.0",
             frameWidth = w,
             frameHeight = h,
             frameAtMaxSpeed = frameAtMax,

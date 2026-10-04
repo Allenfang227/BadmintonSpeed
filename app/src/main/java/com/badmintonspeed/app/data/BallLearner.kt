@@ -223,6 +223,26 @@ object BallLearner {
         } catch (e: Exception) { null }
     }
 
+    /**
+     * 导出训练模型为 ONNX 格式（v2.24，用户要求"训练完之后导数为 onnx 格式"）。
+     * 生成 ball_model/shuttle_user.onnx：Gemm(模板权重)+Sigmoid 线性分类器，
+     * 是真正的 ONNX 模型文件，可被 ONNX Runtime 加载推理、可分享给他人直接使用。
+     */
+    fun exportOnnx(modelDir: File, dst: File? = null): File? {
+        val m = loadModel(modelDir) ?: return null
+        if (m.templates.isEmpty()) return null
+        val target = dst ?: File(modelDir, "shuttle_user.onnx")
+        try {
+            target.writeBytes(OnnxExporter.buildModel(m.templates))
+            return target
+        } catch (e: Exception) {
+            return null
+        }
+    }
+
+    /** patch → 48×48 灰度归一化模板（公开：用户 ONNX 推理预处理复用同一口径） */
+    fun toTemplatePublic(bmp: Bitmap): FloatArray = toTemplate(bmp)
+
     /** patch → 48×48 灰度归一化模板 */
     private fun toTemplate(bmp: Bitmap): FloatArray {
         val small = Bitmap.createScaledBitmap(bmp, TEMPLATE_SIZE, TEMPLATE_SIZE, true)

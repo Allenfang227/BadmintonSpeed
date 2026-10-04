@@ -4,7 +4,6 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -13,27 +12,25 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.asImageBitmap
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.badmintonspeed.app.ui.theme.Background
 import com.badmintonspeed.app.ui.theme.Surface
 import com.badmintonspeed.app.data.BallLearner
 import com.badmintonspeed.app.data.CourtModelRepo
 import java.io.File
 
 /**
- * v2.18 模型训练模式（首页第 3 模块）：
- *  - 左栏：模型文件管理——查看 Download/BadmintonSpeed 目录内容（方便转发/找文件）
- *  - 右栏：本地模型训练——上传"红框标注羽毛球"的图片，AI 学习标注区域，
- *          存到 ball_model/，实测时调用该模型辅助检测羽毛球。
+ * v2.24 模型训练模式（参考专业路径重排"正确使用方法"）：
+ * 导入图片（收集红框标注样本）→ 开始训练（用样本库训练）→ 导出 ONNX（训练完导出 .onnx）
+ * 三个功能完全独立：导入只入库，训练只用已入库样本，导出只打包模型。
+ * 修复 v2.23 缺陷："开始训练"按钮误用图片选择器（和导入图片同一个功能）。
  */
 @Composable
 fun TrainModeScreen(onOpenFiles: () -> Unit, onBack: () -> Unit) {
@@ -44,10 +41,11 @@ fun TrainModeScreen(onOpenFiles: () -> Unit, onBack: () -> Unit) {
     var sampleCount by remember { mutableStateOf(samplesDir.listFiles()?.size ?: 0) }
     var modelInfo by remember { mutableStateOf(loadModelInfo(modelDir)) }
     var log by remember {
-        mutableStateOf("就绪：选择红框标注羽毛球的图片，AI 将学习标注区域\n训练产物保存于 Download/BadmintonSpeed/ball_model/")
+        mutableStateOf("流程：① 导入图片（红框标注羽毛球的照片）→ ② 开始训练（学习外观）→ ③ 导出 ONNX（生成 shuttle_user.onnx）\n实测视频时自动调用导出的 ONNX 模型辅助识别。")
     }
     var busy by remember { mutableStateOf(false) }
 
+    // ============ 功能 1：导入图片（只收集样本，不训练） ============
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris: List<Uri> ->
         if (uris.isEmpty()) return@rememberLauncherForActivityResult
         busy = true
@@ -78,33 +76,59 @@ fun TrainModeScreen(onOpenFiles: () -> Unit, onBack: () -> Unit) {
         sampleCount = samplesDir.listFiles()?.size ?: 0
         // v2.21：样本立即同步公共目录（卸载不丢）
         if (added > 0) CourtModelRepo.exportToPublic(context, "ball_samples")
-        log += "\n完成：新增样本 $added 个${if (failed > 0) "，$failed 张图未检出红框" else ""}"
+        log += "\n导入完成：新增样本 $added 个${if (failed > 0) "，$failed 张图未检出红框" else ""}。样本已入库，可继续导入或开始训练。"
     }
 
-    val trainer = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { _: List<Uri> ->
+    // ============ 功能 2：开始训练（直接用已入库样本，不再弹图片选择器） ============
+    fun doTrain() {
+        val count = samplesDir.listFiles()?.filter { it.name.endsWith(".jpg") || it.name.endsWith(".png") }?.size ?: 0
+        if (count == 0) {
+            log += "\n无法训练：样本库为空，请先点「导入图片」上传红框标注羽毛球的照片。"
+            return
+        }
         busy = true
-        log += "\n开始训练（${sampleCount} 个样本）…"
+        log += "\n开始训练（${count} 个样本）…"
         val model = BallLearner.train(samplesDir, modelDir)
         if (model != null) {
             CourtModelRepo.exportToPublic(context, "ball_model")
             CourtModelRepo.exportToPublic(context, "ball_samples")
             modelInfo = "模型已训练：${model.count} 个模板"
-            log += "\n训练完成：${model.count} 个模板 → ball_model/templates.json（实测自动调用）"
+            log += "\n训练完成：${model.count} 个模板已写入 ball_model/templates.json。下一步可「导出 ONNX」。"
         } else {
             modelInfo = "无模型"
-            log += "\n训练失败：ball_samples/ 里没有样本，请先上传红框标注图"
+            log += "\n训练失败：ball_samples/ 里没有样本，请先导入图片。"
+        }
+        busy = false
+    }
+
+    // ============ 功能 3：导出 ONNX（训练完把模型导成 .onnx 文件） ============
+    fun doExportOnnx() {
+        val m = BallLearner.loadModel(modelDir)
+        if (m == null) {
+            log += "\n无法导出：还没有训练好的模型，请先点「开始训练」。"
+            return
+        }
+        busy = true
+        log += "\n正在导出 ONNX…"
+        val dst = BallLearner.exportOnnx(modelDir)
+        if (dst != null && dst.exists()) {
+            CourtModelRepo.exportToPublic(context, "ball_model")
+            modelInfo = "模型已训练：${m.count} 个模板 | 已导出 ONNX"
+            log += "\n导出完成：${dst.name}（${dst.length() / 1024} KB）→ Download/BadmintonSpeed/ball_model/。\n实测视频时会自动调用该 ONNX 模型（ONNX Runtime 推理）；分享给别人也能直接使用。"
+        } else {
+            log += "\n导出失败：请确认已先「开始训练」。"
         }
         busy = false
     }
 
     Column(
-        Modifier.fillMaxSize().background(Background).padding(24.dp),
+        Modifier.fillMaxSize().background(Color(0xFF0E1B14)).padding(24.dp),
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Button(onClick = onBack, modifier = Modifier) { Text("← 返回") }
             Spacer(Modifier.weight(1f))
-            Text("模型训练（本地学习羽毛球外观）", color = Color.White, fontSize = 20.sp)
+            Text("模型训练（导出 ONNX）", color = Color.White, fontSize = 20.sp)
             Spacer(Modifier.weight(1f))
             Text(if (busy) "处理中…" else "样本 $sampleCount 个 | $modelInfo", color = Color(0xFFB0BEC5), fontSize = 13.sp)
         }
@@ -121,7 +145,7 @@ fun TrainModeScreen(onOpenFiles: () -> Unit, onBack: () -> Unit) {
                     Text("模型文件", color = Color.White, fontSize = 17.sp)
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        "训练样本与模型保存在：\nDownload/BadmintonSpeed/\n（labels 场地标注 / ball_samples 球样本 / ball_model 训练产物）",
+                        "训练样本与模型保存在：\nDownload/BadmintonSpeed/\n（labels 场地标注 / ball_samples 球样本 / ball_model 训练产物：templates.json + shuttle_user.onnx）",
                         color = Color(0xFF90A4AE), fontSize = 13.sp, lineHeight = 19.sp
                     )
                     Spacer(Modifier.height(20.dp))
@@ -152,29 +176,35 @@ fun TrainModeScreen(onOpenFiles: () -> Unit, onBack: () -> Unit) {
                 }
             }
 
-            // ============ 右栏：模型训练 ============
+            // ============ 右栏：训练流程（三个独立功能，按专业路径） ============
             Card(
                 Modifier.weight(1.4f).fillMaxHeight().padding(start = 12.dp),
                 shape = RoundedCornerShape(20.dp),
                 colors = CardDefaults.cardColors(containerColor = Surface)
             ) {
                 Column(Modifier.fillMaxSize().padding(20.dp)) {
-                    Text("本地模型训练", color = Color.White, fontSize = 17.sp)
+                    Text("训练流程（正确使用方法）", color = Color.White, fontSize = 17.sp)
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        "① 选择用红框标注好羽毛球的图片（相册多选）\n② AI 解析红框 → 裁剪羽毛球区域存入 ball_samples/\n③ 点击训练 → 生成模板库 ball_model/templates.json\n④ 之后实测视频时自动调用该模型辅助识别羽毛球",
+                        "① 导入图片：选择红框标注好羽毛球的照片，解析红框→裁剪球区域→存入样本库（只入库，不训练）\n② 开始训练：用样本库中已有样本训练，生成模板模型（可反复训练叠加）\n③ 导出 ONNX：训练完成后把模型导出为 shuttle_user.onnx，实测自动调用",
                         color = Color(0xFF90A4AE), fontSize = 13.sp, lineHeight = 19.sp
                     )
                     Spacer(Modifier.height(16.dp))
-                    Row {
-                        Button(onClick = { picker.launch("image/*") }, enabled = !busy, modifier = Modifier.weight(1f).padding(end = 8.dp)) {
-                            Text("选择红框标注图")
-                        }
-                        Button(onClick = { trainer.launch("image/*") }, enabled = !busy && sampleCount > 0, modifier = Modifier.weight(1f).padding(start = 8.dp)) {
-                            Text("开始训练")
-                        }
+
+                    // ---- 功能按钮区：三个独立功能 ----
+                    Button(onClick = { picker.launch("image/*") }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+                        Text("① 导入图片（红框标注球）")
                     }
-                    Spacer(Modifier.height(12.dp))
+                    Spacer(Modifier.height(10.dp))
+                    Button(onClick = { doTrain() }, enabled = !busy && sampleCount > 0, modifier = Modifier.fillMaxWidth()) {
+                        Text("② 开始训练（${sampleCount} 个样本）")
+                    }
+                    Spacer(Modifier.height(10.dp))
+                    OutlinedButton(onClick = { doExportOnnx() }, enabled = !busy, modifier = Modifier.fillMaxWidth()) {
+                        Text("③ 导出 ONNX（生成 shuttle_user.onnx）")
+                    }
+
+                    Spacer(Modifier.height(14.dp))
                     Text(
                         log,
                         color = Color(0xFFECEFF1),
@@ -190,5 +220,10 @@ fun TrainModeScreen(onOpenFiles: () -> Unit, onBack: () -> Unit) {
 
 private fun loadModelInfo(modelDir: File): String {
     val m = BallLearner.loadModel(modelDir)
-    return if (m != null) "模型已训练：${m.count} 个模板" else "无模型（未训练）"
+    val onnx = File(modelDir, "shuttle_user.onnx")
+    return if (m != null && onnx.exists()) {
+        "模型已训练：${m.count} 个模板 | 已导出 ONNX"
+    } else if (m != null) {
+        "模型已训练：${m.count} 个模板"
+    } else "无模型（未训练）"
 }
