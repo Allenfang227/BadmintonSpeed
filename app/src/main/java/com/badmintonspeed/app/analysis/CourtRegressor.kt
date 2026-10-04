@@ -284,19 +284,63 @@ object CourtRegressor {
         val mFloor = BooleanArray(W * H)
         val mLoc = BooleanArray(W * H)
         val greenMask = BooleanArray(W * H)
+        val blueMask = BooleanArray(W * H)
         for (i in gray.indices) {
             val brighter = gray[i] - floorVal > 40
             mFloor[i] = brighter && sat[i] < 70
             val isGreen = hue[i] in 55..130 && sat[i] >= 60
             greenMask[i] = isGreen
+            // v2.27.2 颜色域扩展：蓝色场地（hue 165~260 & sat≥50）此前不在此区间 → 蓝色场地必失败
+            blueMask[i] = hue[i] in 165..260 && sat[i] >= 50
         }
         // 局部对比：gray - 31×31 均值 > 25（积分图加速）
         val mean = boxMean(gray, W, H, 31)
         for (i in gray.indices) {
             mLoc[i] = gray[i] - mean[i] > 25 && sat[i] < 80
         }
-        // 绿色地板膨胀 7px（白线本身非绿色，其两侧是）
-        val floorMask = dilate(greenMask, W, H, 7)
+        // ---- v2.27.2 颜色区域上下定位 + 白线双重检测（用户方案）----
+        // ① 上半部同色干扰抑制：y < 0.35H 的颜色区域内，白线样像素占比 < 0.5% → 该色块是布/背景，剔除
+        val upY = (H * 0.35f).toInt()
+        var upColor = 0; var upWhite = 0
+        for (y in 0 until upY) {
+            var base = y * W
+            for (x in 0 until W) {
+                val i = base + x
+                if (greenMask[i] || blueMask[i]) {
+                    upColor++
+                    if (mFloor[i] || mLoc[i]) upWhite++
+                }
+            }
+        }
+        if (upColor > 0 && upWhite.toFloat() / upColor < 0.005f) {
+            for (y in 0 until upY) {
+                var base = y * W
+                for (x in 0 until W) { val i = base + x; greenMask[i] = false; blueMask[i] = false }
+            }
+        }
+        // ② 下半部主色验证：y ≥ 0.5H 颜色占比 < 5% → 该颜色不是场地（整面蓝墙/绿墙）→ 颜色约束降级
+        val lowY = (H * 0.5f).toInt()
+        var lowerColor = 0; var lowerTotal = 0
+        for (y in lowY until H) {
+            var base = y * W
+            for (x in 0 until W) {
+                val i = base + x
+                if (greenMask[i] || blueMask[i]) lowerColor++
+                lowerTotal++
+            }
+        }
+        val colorMask = if (lowerTotal > 0 && lowerColor.toFloat() / lowerTotal < 0.05f) {
+            // 木地板/深色场地兜底：白线不受颜色约束（旧版全图行为）
+            null
+        } else {
+            BooleanArray(W * H) { greenMask[it] || blueMask[it] }
+        }
+        // ③ 颜色掩码膨胀 7px（白线本身非场地色，其两侧是）；无颜色域时用全真掩码
+        val floorMask = if (colorMask == null) {
+            BooleanArray(W * H) { true }
+        } else {
+            dilate(colorMask, W, H, 7)
+        }
         var white = BooleanArray(W * H)
         for (i in white.indices) {
             white[i] = (mFloor[i] || mLoc[i]) && floorMask[i]

@@ -34,14 +34,33 @@ def enhance_white(img):
     m_floor = ((gray0.astype(np.int16) - floorVal > 40) & (sat < 70)).astype(np.uint8) * 255
     mean = cv2.boxFilter(gray0, -1, (31, 31))
     m_loc = ((gray0.astype(np.int16) - mean > 25) & (sat < 80)).astype(np.uint8) * 255
-    # 地板色空间约束：仅"绿色塑胶场地"区域（HSV hue 55~130 且 sat≥60）内才可能有场地线。
-    # 人物白衣/广告白底/黄色护墙/显示屏 hue 不在绿色区间 → 全部排除，根治 B 误检。
+    # 地板色空间约束（v2.27.2）：颜色域扩展为 绿 ∪ 蓝（hue 55~130 / 165~260），
+    # 蓝色场地此前 hue 不在绿色区间 → floorMask 全空 → 蓝色场地必失败。
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
     hh, ss, vv = cv2.split(hsv)
-    greenMask = (((hh >= 55) & (hh <= 130)) & (ss >= 60)).astype(np.uint8) * 255
-    # 膨胀：白线本身不是绿色，但其两侧是
-    floorMask = cv2.dilate(greenMask, np.ones((7, 7), np.uint8))
-    white = cv2.max(m_floor, m_loc)
+    green = ((hh >= 55) & (hh <= 130)) & (ss >= 60)
+    blue = ((hh >= 165) & (hh <= 260)) & (ss >= 50)
+    colorMask = (green | blue).astype(np.uint8) * 255
+    H, W = img.shape[:2]
+    # 上半部同色干扰抑制（用户：场边蓝布/绿布常在上半部且无白线 → 先排掉）：
+    #   y < 0.35H 的颜色区域内，若"白线样像素"（比地板亮≥40 且低饱和）占比 < 0.5% → 该颜色区域剔除
+    whiteBase = cv2.max(m_floor, m_loc)
+    up = colorMask[:int(H * 0.35)] > 0
+    if up.sum() > 0:
+        upWhite = (whiteBase[:int(H * 0.35)] > 0) & up
+        upRatio = upWhite.mean()
+        if upRatio < 0.005:
+            colorMask[:int(H * 0.35)] = 0
+    # 下半部主色验证（用户双重判据：场地色主体在下半部）：
+    #   若下半部颜色占比 < 5% → 该颜色不是场地（整面蓝墙/绿墙）→ 颜色约束降级为不约束（木地板/深色场地兜底）
+    lower = colorMask[int(H * 0.5):] > 0
+    lowerRatio = lower.mean() if lower.size > 0 else 0.0
+    if lowerRatio < 0.05:
+        floorMask = np.full((H, W), 255, np.uint8)
+    else:
+        # 膨胀：白线本身不是场地色，但其两侧是
+        floorMask = cv2.dilate(colorMask, np.ones((7, 7), np.uint8))
+    white = whiteBase
     white = cv2.bitwise_and(white, floorMask)
     # 形态学：闭合断线 + 去孤点
     white = cv2.morphologyEx(white, cv2.MORPH_CLOSE, np.ones((5, 5), np.uint8))
