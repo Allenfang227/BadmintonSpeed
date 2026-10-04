@@ -2,6 +2,7 @@ package com.badmintonspeed.app.ui.analysis
 
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -40,18 +41,20 @@ import com.badmintonspeed.app.domain.AnalysisPhase
 import com.badmintonspeed.app.domain.StageUpdate
 import com.badmintonspeed.app.ui.MainViewModel
 import com.badmintonspeed.app.ui.components.CourtOverlay
-import com.badmintonspeed.app.ui.theme.Background
 import com.badmintonspeed.app.ui.theme.Error
-import com.badmintonspeed.app.ui.theme.OnBackground
-import com.badmintonspeed.app.ui.theme.OnSurfaceVariant
 import com.badmintonspeed.app.ui.theme.Primary
 import com.badmintonspeed.app.ui.theme.Success
-import com.badmintonspeed.app.ui.theme.Surface
-import com.badmintonspeed.app.ui.theme.SurfaceVariant
 import kotlinx.coroutines.delay
 
+/** v2.23 白色分析页配色（与白色首页一致） */
+private val WCardBg = Color(0xFFF2F7F4)
+private val WCardBorder = Color(0xFFDCE7E1)
+private val WTitle = Color(0xFF10231A)
+private val WDesc = Color(0xFF5E7267)
+private val WTrack = Color(0xFFE0E7E3)
+
 /**
- * 分析进度页（参考图2/图3）：
+ * 分析进度页（参考图2/图3，v2.23 白色版）：
  * 左侧实时视频预览（带检测框），右侧分模块步骤面板，底部预计时长+取消。
  */
 @Composable
@@ -77,7 +80,7 @@ fun AnalysisScreen(vm: MainViewModel) {
         (speed * (100f - totalPct) / 1000f).toLong()
     } else 0L
 
-    Column(Modifier.fillMaxSize().background(Background).padding(16.dp)) {
+    Column(Modifier.fillMaxSize().background(Color.White).padding(16.dp)) {
         // ---- 顶部标题 ----
         Text(
             "上传视频测速",
@@ -123,10 +126,12 @@ fun AnalysisScreen(vm: MainViewModel) {
                 ) {
                     Text(speeds[speedIdx], color = Color.White, fontSize = 13.sp, fontWeight = FontWeight.Bold)
                 }
-                // 预处理提示（图1：先处理视频 -> 正在检测重复帧 xx%）
+                // 预处理提示（v2.23 新流程：转格式 -> 场地颜色 -> 场地检测 -> 重复帧 -> 正式检测）
                 val preprocessText = when {
-                    totalPct < 4f -> "正在处理视频 ${(totalPct / 4f * 100).toInt().coerceIn(0, 99)}%"
-                    totalPct < 8f -> "正在检测重复帧 ${((totalPct - 4f) / 4f * 100).toInt().coerceIn(0, 99)}%"
+                    totalPct < 10f -> "正在转换视频格式 ${(totalPct / 10f * 100).toInt().coerceIn(0, 99)}%"
+                    totalPct < 12f -> "正在识别场地颜色 ${((totalPct - 10f) / 2f * 100).toInt().coerceIn(0, 99)}%"
+                    totalPct < 32f -> "正在检测场地 ${((totalPct - 12f) / 20f * 100).toInt().coerceIn(0, 99)}%"
+                    totalPct < 35f -> "正在检测重复帧 ${((totalPct - 32f) / 3f * 100).toInt().coerceIn(0, 99)}%"
                     else -> null
                 }
                 preprocessText?.let {
@@ -146,7 +151,7 @@ fun AnalysisScreen(vm: MainViewModel) {
                         .align(Alignment.BottomCenter)
                         .fillMaxWidth()
                         .height(4.dp)
-                        .background(Color(0xFF334155))
+                        .background(WTrack)
                 ) {
                     Box(
                         Modifier
@@ -199,7 +204,7 @@ fun AnalysisScreen(vm: MainViewModel) {
 
                 // ---- 底部状态行（固定，图2/图3）----
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    Text("正在进行分析", color = OnBackground, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                    Text("正在进行分析", color = WTitle, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                     Spacer(Modifier.weight(1f))
                     OutlinedButton(
                         onClick = { vm.cancelAnalysis() },
@@ -211,7 +216,7 @@ fun AnalysisScreen(vm: MainViewModel) {
                 Spacer(Modifier.height(4.dp))
                 Text(
                     "预计时长约 ${fmtDuration(remainSec)}，您可退出应用，程序会继续",
-                    color = OnSurfaceVariant,
+                    color = WDesc,
                     fontSize = 12.sp
                 )
             }
@@ -235,25 +240,26 @@ private fun ModuleCard(phase: AnalysisPhase, stage: StageUpdate?, highlight: Boo
     val statusColor = when {
         done || doneEarly -> Success
         active -> Primary
-        else -> OnSurfaceVariant
+        else -> WDesc
     }
-    val cardBg = if (active || done || doneEarly) Surface else Surface.copy(alpha = 0.45f)
+    val cardBg = if (active || done || doneEarly) WCardBg else WCardBg.copy(alpha = 0.45f)
 
     Column(
         Modifier
             .fillMaxWidth()
             .background(cardBg, RoundedCornerShape(10.dp))
+            .border(1.dp, WCardBorder, RoundedCornerShape(10.dp))
             .padding(horizontal = 14.dp, vertical = 10.dp)
     ) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text(phase.title, color = OnBackground, fontSize = 15.sp, fontWeight = FontWeight.Bold)
+            Text(phase.title, color = WTitle, fontSize = 15.sp, fontWeight = FontWeight.Bold)
             Spacer(Modifier.weight(1f))
             Text(statusText, color = statusColor, fontSize = 12.sp, fontWeight = FontWeight.Bold)
         }
         if (active) {
             Text(
                 "确保视频中羽毛球拍摄清晰，不要和白色背景融合",
-                color = OnSurfaceVariant,
+                color = WDesc,
                 fontSize = 11.sp,
                 modifier = Modifier.padding(top = 2.dp)
             )
@@ -275,13 +281,13 @@ private fun StepRow(name: String, state: String) {
     val (icon, color) = when (state) {
         "done" -> "✓" to Success
         "current" -> "●" to Primary
-        else -> "○" to OnSurfaceVariant
+        else -> "○" to WDesc
     }
     Row(Modifier.padding(vertical = 2.dp), verticalAlignment = Alignment.CenterVertically) {
         Text(icon, color = color, fontSize = 11.sp, modifier = Modifier.width(16.dp))
         Text(
             name,
-            color = if (state == "pending") OnSurfaceVariant else OnBackground,
+            color = if (state == "pending") WDesc else WTitle,
             fontSize = 12.sp,
             fontWeight = if (state == "current") FontWeight.Bold else FontWeight.Normal
         )

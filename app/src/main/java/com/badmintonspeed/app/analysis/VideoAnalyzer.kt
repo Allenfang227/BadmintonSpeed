@@ -108,6 +108,61 @@ class VideoAnalyzer {
         isAntiAlias = true
     }
 
+    /** 场地颜色先验叠加文字（白字+黑描边，任何底色上可读） */
+    private val courtColorPaint = Paint().apply {
+        color = Color.WHITE
+        textSize = 44f
+        isAntiAlias = true
+        style = Paint.Style.FILL
+        setShadowLayer(6f, 0f, 0f, Color.BLACK)
+    }
+
+    /**
+     * 场地颜色识别（v2.23 新增独立阶段，秒级完成）：
+     * 采样画面中心 60% 区域（避开边线/广告/观众席），按 RGB 主色调分类，
+     * 输出"绿色场地/蓝色场地/木地板/深色场地…"作为场地检测前的先验展示。
+     */
+    private fun detectCourtColor(bmp: Bitmap): String {
+        return try {
+            val w = bmp.width; val h = bmp.height
+            var rSum = 0.0; var gSum = 0.0; var bSum = 0.0; var n = 0.0
+            val x0 = (w * 0.2f).toInt(); val y0 = (h * 0.2f).toInt()
+            val x1 = (w * 0.8f).toInt(); val y1 = (h * 0.8f).toInt()
+            val px = IntArray(w * h)
+            bmp.getPixels(px, 0, w, 0, 0, w, h)
+            var y = y0
+            while (y < y1) {
+                var x = x0
+                while (x < x1) {
+                    val c = px[y * w + x]
+                    rSum += (c shr 16) and 0xFF
+                    gSum += (c shr 8) and 0xFF
+                    bSum += c and 0xFF
+                    n++
+                    x += 2
+                }
+                y += 2
+            }
+            if (n < 4) return "未知"
+            val r = (rSum / n).toFloat()
+            val g = (gSum / n).toFloat()
+            val b = (bSum / n).toFloat()
+            val mx = maxOf(r, g, b); val mn = minOf(r, g, b)
+            val s = if (mx == 0f) 0f else (mx - mn) / mx
+            val v = mx
+            when {
+                s < 0.15f && v > 120f -> "灰白/木地板色"
+                g >= r && g >= b && s > 0.15f -> "绿色场地"
+                b >= r && b >= g && s > 0.15f -> "蓝色场地"
+                r >= g && r >= b && s > 0.2f -> "红/橙色场地"
+                v < 80f -> "深色场地"
+                else -> "混合色场地"
+            }
+        } catch (e: Exception) {
+            "未知"
+        }
+    }
+
     /**
      * @param context        加载 assets 中的 ONNX 模型
      * @param videoFile      视频文件
@@ -131,7 +186,9 @@ class VideoAnalyzer {
         } catch (e: Exception) { null }
         val startTime = System.currentTimeMillis()
 
-        // ================= 阶段 1：先处理视频（0-4%，全程显示画面） =================
+        // ================= 阶段 1：先转格式/抽帧（0-10%，全程显示画面） =================
+        // v2.23 用户要求"处理视频主要是转化成需要的格式，而不是开始测速"：
+        // 此阶段只做 MediaCodec 顺序解码 + 抽帧（不再逐帧 seek），不跑任何检测
         val extractor = VideoFrameExtractor()
         val extracted = extractor.extract(
             file = videoFile,
@@ -143,7 +200,7 @@ class VideoAnalyzer {
                         phase = AnalysisPhase.COURT,
                         stepIndex = 0,
                         phasePercent = 0f,
-                        totalPercent = 4f * (done.toFloat() / total.coerceAtLeast(1))
+                        totalPercent = 10f * (done.toFloat() / total.coerceAtLeast(1))
                     )
                 )
             },
@@ -163,55 +220,44 @@ class VideoAnalyzer {
         val w = frames.first().bitmap.width
         val h = frames.first().bitmap.height
 
-        // ================= 阶段 2：检查重复帧（4-8%，图1） =================
-        val deduped = dedupeFrames(frames) { pct ->
-            onStage(
-                StageUpdate(
-                    phase = AnalysisPhase.COURT,
-                    stepIndex = 0,
-                    phasePercent = 0f,
-                    totalPercent = 4f + 4f * pct / 100f
-                )
-            )
-        }
-        if (deduped.size < 6) {
-            throw AnalysisException(
-                AnalysisError(
-                    code = "E002",
-                    title = "重复帧过多，无法测速",
-                    detail = "检测到视频中大量画面静止/重复（如视频卡住或误选了照片），需要包含实际打球过程的视频。",
-                    threshold = "有效帧 ${deduped.size} / 需要 ≥ 6"
-                )
-            )
-        }
-        val framesAll = deduped
+        // ================= 阶段 2：识别场地颜色（10-12%，轻量先验） =================
+        // v2.23 用户要求"先转换成格式，然后识别一下场地颜色"：
+        // 只做中心区域主色分类（绿/蓝/木地板/其他），作为场地检测前的先验展示，秒级完成
+        onStage(StageUpdate(AnalysisPhase.COURT, 0, 10f, 11f))
+        val courtColor = detectCourtColor(frames.first().bitmap)
+        val colorPreview = frames.first().bitmap.copy(Bitmap.Config.ARGB_8888, true)
+        val cvColor = Canvas(colorPreview)
+        cvColor.drawText("场地颜色：$courtColor", 24f, 56f, courtColorPaint)
+        onPreviewFrame(colorPreview)
+        onStage(StageUpdate(AnalysisPhase.COURT, 0, 100f, 12f))
+        delay(60)
 
-        // ================= 阶段 3：场地基准检测（8-28%，全 AI 标注，去掉手工标定） =================
+        // ================= 阶段 3：场地基准检测（12-32%，全 AI 标注，去掉手工标定） =================
         // v2.13 用户要求："去掉手工标注，改为全AI标注"。逻辑：
         //  1) 视角固定 → 截取前10帧、中间10帧、后10帧 → 逐帧图片识别（背景色验证+长实线扫描）
         //  2) 多时间点投票：多数一致才采纳（"背景不在这种场地上就判误识别"）
         //  3) 全部失败 → 学习容器历史先验 → 仍失败报 E101（不再弹手动标定）
-        onStage(StageUpdate(AnalysisPhase.COURT, 0, 10f, 9f))
-        onPreviewFrame(framesAll.first().bitmap.copy(Bitmap.Config.ARGB_8888, true))
+        onStage(StageUpdate(AnalysisPhase.COURT, 0, 12f, 13f))
+        onPreviewFrame(frames.first().bitmap.copy(Bitmap.Config.ARGB_8888, true))
         delay(120)
         val courtSamples = LinkedHashSet<Int>()
-        val third = framesAll.size / 3
+        val third = frames.size / 3
         // 前10帧段、中间10帧段、后10帧段（每段均匀取帧）
         for (segStart in listOf(0, third, third * 2)) {
-            val seg = (0 until minOf(10, framesAll.size)).map { (segStart + it * framesAll.size / 30).coerceIn(0, framesAll.size - 1) }.distinct()
+            val seg = (0 until minOf(10, frames.size)).map { (segStart + it * frames.size / 30).coerceIn(0, frames.size - 1) }.distinct()
             courtSamples.addAll(seg)
         }
         var courtCornersPx: List<PointF>? = null
-        var anchorFrame = framesAll.first().bitmap
+        var anchorFrame = frames.first().bitmap
         val candidates = ArrayList<List<PointF>>()
         val sampleList = courtSamples.toList()
         // v2.15 E101 失败分类统计（A漏检/B误检/C拓扑错/D几何歪）：
         // 用户要求"每一类占比 + 判断主因"，先积累采样帧的诊断信号再给出占比
         val diagCount = IntArray(4) // [A漏检, B误检, C拓扑错, D几何歪]
         for ((idx, pi) in sampleList.withIndex()) {
-            val probe = framesAll[pi.coerceIn(0, framesAll.size - 1)].bitmap
-            val pct = 10f + 60f * ((idx + 1).toFloat() / sampleList.size)
-            onStage(StageUpdate(AnalysisPhase.COURT, 0, pct, 9f + 10f * ((idx + 1).toFloat() / sampleList.size)))
+            val probe = frames[pi.coerceIn(0, frames.size - 1)].bitmap
+            val pct = 12f + 20f * ((idx + 1).toFloat() / sampleList.size)
+            onStage(StageUpdate(AnalysisPhase.COURT, 0, pct, 13f + 16f * ((idx + 1).toFloat() / sampleList.size)))
             val r = try {
                 CourtAutoCalibrator.calibrate(probe, roiPolygon)
             } catch (e: Exception) {
@@ -243,7 +289,7 @@ class VideoAnalyzer {
                 var votes = 1
                 for (j in candidates.indices) {
                     if (i == j) continue
-                    if (cornersClose(candidates[i], candidates[j], framesAll.first().bitmap.width)) votes++
+                    if (cornersClose(candidates[i], candidates[j], frames.first().bitmap.width)) votes++
                 }
                 agree[i] = votes
             }
@@ -253,9 +299,9 @@ class VideoAnalyzer {
             } else {
                 candidates.first() // 单帧通过验证：直接采纳（不再死板要求多数一致）
             }
-            anchorFrame = framesAll[sampleList[0].coerceIn(0, framesAll.size - 1)].bitmap
+            anchorFrame = frames[sampleList[0].coerceIn(0, frames.size - 1)].bitmap
         }
-        onStage(StageUpdate(AnalysisPhase.COURT, 1, 70f, 21f))
+        onStage(StageUpdate(AnalysisPhase.COURT, 1, 70f, 29f))
         delay(120)
 
         if (courtCornersPx == null) {
@@ -264,10 +310,10 @@ class VideoAnalyzer {
             val predicted = learner.predict(w, h)
             if (predicted != null && isValidPrediction(predicted, w, h)) {
                 courtCornersPx = predicted
-                anchorFrame = framesAll.first().bitmap
-                onStage(StageUpdate(AnalysisPhase.COURT, 2, 85f, 22f))
-                onStage(StageUpdate(AnalysisPhase.COURT, 3, 90f, 25f))
-                onStage(StageUpdate(AnalysisPhase.COURT, 3, 100f, 28f, done = true))
+                anchorFrame = frames.first().bitmap
+                onStage(StageUpdate(AnalysisPhase.COURT, 2, 85f, 30f))
+                onStage(StageUpdate(AnalysisPhase.COURT, 3, 90f, 31f))
+                onStage(StageUpdate(AnalysisPhase.COURT, 3, 100f, 32f, done = true))
                 onPreviewFrame(anchorFrame.copy(Bitmap.Config.ARGB_8888, true))
                 delay(150)
             } else {
@@ -295,7 +341,7 @@ class VideoAnalyzer {
                 )
             }
         }
-        onStage(StageUpdate(AnalysisPhase.COURT, 3, 92f, 25f))
+        onStage(StageUpdate(AnalysisPhase.COURT, 3, 92f, 31f))
         // 把本次成功标定纳入学习容器（提高下次自动识别精准度）
         try {
             CourtLearner(context).save(courtCornersPx, w, h)
@@ -320,11 +366,35 @@ class VideoAnalyzer {
             for (pt in cp) cv.drawCircle(pt.x, pt.y, 7f, cornerPaint)
         }
         onPreviewFrame(courtPreview)
-        onStage(StageUpdate(AnalysisPhase.COURT, 3, 100f, 28f, done = true))
+        onStage(StageUpdate(AnalysisPhase.COURT, 3, 100f, 32f, done = true))
         delay(250)
 
-        // ================= 阶段 4：羽毛球检测（28-78%，YOLO11 ONNX 真实检测） =================
-        onStage(StageUpdate(AnalysisPhase.SHUTTLE, 0, 5f, 30f))
+        // ================= 阶段 3.5：检查重复帧（32-35%，图1） =================
+        // v2.23 用户要求顺序：转格式 → 场地颜色 → 场地检测 → 重复帧 → 正式检测
+        val deduped = dedupeFrames(frames) { pct ->
+            onStage(
+                StageUpdate(
+                    phase = AnalysisPhase.COURT,
+                    stepIndex = 0,
+                    phasePercent = 0f,
+                    totalPercent = 32f + 3f * pct / 100f
+                )
+            )
+        }
+        if (deduped.size < 6) {
+            throw AnalysisException(
+                AnalysisError(
+                    code = "E002",
+                    title = "重复帧过多，无法测速",
+                    detail = "检测到视频中大量画面静止/重复（如视频卡住或误选了照片），需要包含实际打球过程的视频。",
+                    threshold = "有效帧 ${deduped.size} / 需要 ≥ 6"
+                )
+            )
+        }
+        val framesAll = deduped
+
+        // ================= 阶段 4：羽毛球检测（35-88%，YOLO11 ONNX 真实检测） =================
+        onStage(StageUpdate(AnalysisPhase.SHUTTLE, 0, 5f, 35f))
         val detector = ShuttleOnnxDetector(context)
         // 融合自 AI-YuJian-AI ShuttlecockTracker：帧间跳跃门限+速度预测+丢帧容忍+检测框面积/宽高比过滤+ROI限制
         val shuttleTracker = ShuttleTracker(
@@ -360,11 +430,11 @@ class VideoAnalyzer {
         // 判断羽毛球可能存在的位置……去除掉人员检测的人员位置"）：
         // 帧差运动区域即运动员位置，白色衣服/球拍会被帧差和背景差分误检成球。
         // 提前算好球员框（膨胀1.6倍），球候选落入球员框内的直接丢弃。
-        onStage(StageUpdate(AnalysisPhase.PLAYER, 0, 5f, 29f))
+        onStage(StageUpdate(AnalysisPhase.PLAYER, 0, 5f, 36f))
         val playerRects = try { detectPlayers(framesAll) { stepIdx, pct ->
-            onStage(StageUpdate(AnalysisPhase.PLAYER, stepIdx, pct, 28f + 10f * pct / 100f))
+            onStage(StageUpdate(AnalysisPhase.PLAYER, stepIdx, pct, 35f + 4f * pct / 100f))
         } } catch (e: Exception) { emptyList() }
-        onStage(StageUpdate(AnalysisPhase.PLAYER, 3, 100f, 38f, done = true))
+        onStage(StageUpdate(AnalysisPhase.PLAYER, 3, 100f, 39f, done = true))
         val excludedRects = playerRects.map { r ->
             android.graphics.RectF(
                 (r.left - r.width() * 0.3f).coerceAtLeast(0f),
@@ -479,10 +549,10 @@ class VideoAnalyzer {
             // 步骤映射：前 40% 帧为"背景差分"（全帧扫描），后 60% 为"SVM分类"（跟踪筛选）
             val stepIdx = if (i < framesAll.size * 0.4f) 0 else 1
             val phasePct = 5f + 90f * (i.toFloat() / framesAll.size)
-            onStage(StageUpdate(AnalysisPhase.SHUTTLE, stepIdx, phasePct, 38f + 47f * (i.toFloat() / framesAll.size)))
+            onStage(StageUpdate(AnalysisPhase.SHUTTLE, stepIdx, phasePct, 39f + 49f * (i.toFloat() / framesAll.size)))
         }
         detector.close()
-        onStage(StageUpdate(AnalysisPhase.SHUTTLE, 1, 100f, 78f, done = true))
+        onStage(StageUpdate(AnalysisPhase.SHUTTLE, 1, 100f, 88f, done = true))
 
         if (detectedFrames < 6) {
             throw AnalysisException(
@@ -509,7 +579,7 @@ class VideoAnalyzer {
         // 人员位置已在球检测前算好（playerRects），这里直接跑骨骼：
         // 使用 MediaPipe PoseLandmarker 官方 AI 模型（assets/models/pose_landmarker.task，多人 33 关键点）
         // v2.13 提速：检测频率 每6帧 -> 每10帧
-        onStage(StageUpdate(AnalysisPhase.PLAYER, 2, 5f, 39f))
+        onStage(StageUpdate(AnalysisPhase.PLAYER, 2, 5f, 88f))
         val poseFrames = ArrayList<PoseFrameData>()
         val poseDetector = try { PoseDetector(context) } catch (e: Exception) { null }
         if (poseDetector != null) {
@@ -522,7 +592,7 @@ class VideoAnalyzer {
                 }
                 if (i % 20 == 0) {
                     val pct = 10f + 80f * (i.toFloat() / framesAll.size)
-                    onStage(StageUpdate(AnalysisPhase.PLAYER, 2, pct, 38f + 12f * pct / 100f))
+                    onStage(StageUpdate(AnalysisPhase.PLAYER, 2, pct, 88f + 6f * pct / 100f))
                 }
                 yield()
             }
@@ -551,11 +621,11 @@ class VideoAnalyzer {
             }
             poseDetector.close()
         }
-        onStage(StageUpdate(AnalysisPhase.PLAYER, 3, 100f, 50f, done = true))
+        onStage(StageUpdate(AnalysisPhase.PLAYER, 3, 100f, 94f, done = true))
         delay(200)
 
-        // ================= 阶段 6：击球点检测 + 球速（88-100%） =================
-        onStage(StageUpdate(AnalysisPhase.HIT, 0, 20f, 85f))
+        // ================= 阶段 6：击球点检测 + 球速（94-100%） =================
+        onStage(StageUpdate(AnalysisPhase.HIT, 0, 20f, 95f))
         val speedCalc = SpeedCalculator(homography)
         val points = rawPoints.mapIndexed { i, p ->
             if (i == 0) p.copy(speedKmh = 0f)
@@ -563,7 +633,7 @@ class VideoAnalyzer {
         }
         delay(120)
         // 击球动作识别（用户要求）：复用阶段5的人员检测结果，用运动员区域关联击球点
-        onStage(StageUpdate(AnalysisPhase.HIT, 1, 60f, 92f))
+        onStage(StageUpdate(AnalysisPhase.HIT, 1, 60f, 97f))
         val hits = HitDetector().detect(points, playerRects, poseFrames)
         val smashFrames = hits.filter { it.hitType == HitType.SMASH }
             .flatMap { it.trajectory.map { tp -> tp.frame } }
@@ -593,7 +663,7 @@ class VideoAnalyzer {
             hits = hits,
             summary = summary,
             analysisDurationMs = System.currentTimeMillis() - startTime,
-            appVersion = "2.22.0",
+            appVersion = "2.23.0",
             frameWidth = w,
             frameHeight = h,
             frameAtMaxSpeed = frameAtMax,
