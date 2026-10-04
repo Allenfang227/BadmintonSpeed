@@ -130,6 +130,17 @@ object CourtAutoCalibrator {
             sat[i] = max(r, max(g, b)) - min(r, min(g, b))
         }
 
+        // ---- 1.5) v3 关键点配准通道（宿主 8/8 样本验证版，优先）：
+        // 绿色地板掩码 + 多方向游程线段 + 平行线族选向 + 交点十字校验 + BWF 模板 RANSAC + 球网选场。
+        // 旧 ABC 管线常输出"半构造贴合"的结果而被校验放行，必须让新算法先跑。 ----
+        val roiScaled = roi?.map { PointF(it.x * scale, it.y * scale) }
+        val regressed = try { CourtRegressor.regress(bmp, roiScaled) } catch (e: Exception) { null }
+        if (regressed != null) {
+            val v = GeometricVerifier.verify(regressed, srcW, srcH)
+            lastDiagnosis = Diagnosis(whiteRatio, true, v.ok, v.ok)
+            if (v.ok) return regressed
+        }
+
         // ---- 2) ABC 三套方案级联，任一成功即返回 ----
         // 方案A：多阈值白线 + Sobel（正常参数）
         val otsuT = otsu(gray).coerceIn(100, 230) // 下限从150降到100，暗场馆不丢线
@@ -167,14 +178,13 @@ object CourtAutoCalibrator {
             if (v.ok) return scaled
         }
 
-        // v2.15 关键点配准通道（采纳建议："回归关键点 + 套用刚性模板"）：
+        // v2.15 关键点配准通道（v3 已在 1.5 步优先执行，此处仅 ABC 失败后的最后兜底重试）：
         // 白线扫描 -> 线交点（关键点）-> RANSAC 拟合 BWF 模板 -> 反投影 4 角。
-        // 即使 ABC 线检测失败、只扫到 4~5 个交点也能拟合出场地。
-        val regressed = try { CourtRegressor.regress(bmp, roi) } catch (e: Exception) { null }
-        if (regressed != null) {
-            val v = GeometricVerifier.verify(regressed, srcW, srcH)
+        val regressedFallback = try { CourtRegressor.regress(bmp, roiScaled) } catch (e: Exception) { null }
+        if (regressedFallback != null) {
+            val v = GeometricVerifier.verify(regressedFallback, srcW, srcH)
             lastDiagnosis = Diagnosis(whiteRatio, true, v.ok, v.ok)
-            if (v.ok) return regressed
+            if (v.ok) return regressedFallback
         }
 
         // 全部通道失败/校验不过：返回 ABC 的最优结果由上层多帧投票兜底（不在这里硬判）
