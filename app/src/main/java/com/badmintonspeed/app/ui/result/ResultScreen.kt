@@ -196,11 +196,13 @@ fun ResultScreen(vm: MainViewModel) {
                     TextureView(ctx).apply {
                         val videoW = result.frameWidth.toFloat()
                         val videoH = result.frameHeight.toFloat()
-                        fun applyFitCenter(viewW: Int, viewH: Int) {
-                            if (viewW <= 0 || viewH <= 0 || videoW <= 0f || videoH <= 0f) return
-                            val scale = min(viewW / videoW, viewH / videoH)
-                            val dx = (viewW - videoW * scale) / 2f
-                            val dy = (viewH - videoH * scale) / 2f
+                        fun applyFitCenter() {
+                            val vw = this@apply.width
+                            val vh = this@apply.height
+                            if (vw <= 0 || vh <= 0 || videoW <= 0f || videoH <= 0f) return
+                            val scale = min(vw / videoW, vh / videoH)
+                            val dx = (vw - videoW * scale) / 2f
+                            val dy = (vh - videoH * scale) / 2f
                             val m = android.graphics.Matrix()
                             m.setScale(scale, scale)
                             m.postTranslate(dx, dy)
@@ -208,15 +210,16 @@ fun ResultScreen(vm: MainViewModel) {
                         }
                         surfaceTextureListener = object : android.view.TextureView.SurfaceTextureListener {
                             override fun onSurfaceTextureAvailable(surface: android.graphics.SurfaceTexture, width: Int, height: Int) {
-                                applyFitCenter(width, height)
+                                applyFitCenter()
                                 runCatching {
                                     mediaPlayer.setSurface(android.view.Surface(surface))
                                 }
                             }
-                            override fun onSurfaceTextureSizeChanged(s: android.graphics.SurfaceTexture, w: Int, h: Int) { applyFitCenter(w, h) }
+                            override fun onSurfaceTextureSizeChanged(s: android.graphics.SurfaceTexture, w: Int, h: Int) { applyFitCenter() }
                             override fun onSurfaceTextureDestroyed(s: android.graphics.SurfaceTexture) = true
                             override fun onSurfaceTextureUpdated(s: android.graphics.SurfaceTexture) {}
                         }
+                        addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> applyFitCenter() }
                     }
                 },
                 modifier = Modifier.fillMaxSize()
