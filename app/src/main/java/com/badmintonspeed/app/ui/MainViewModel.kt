@@ -9,6 +9,7 @@ import android.provider.OpenableColumns
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.badmintonspeed.app.analysis.CourtLearner
+import com.badmintonspeed.app.analysis.OrtSessions
 import com.badmintonspeed.app.analysis.VideoAnalyzer
 import com.badmintonspeed.app.analysis.VideoFrameExtractor
 import com.badmintonspeed.app.data.CourtModelRepo
@@ -90,6 +91,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         _showPerfOverlay.value = !_showPerfOverlay.value
         if (_showPerfOverlay.value) startPerfMonitor() else stopPerfMonitor()
     }
+
+    // v2.42 超线程计算开关（是否启用 SMT 虚拟核并行推理，直接影响 OrtSessions.intraThreads）
+    private val _smtEnabled = MutableStateFlow(OrtSessions.smtEnabled)
+    val smtEnabled: StateFlow<Boolean> = _smtEnabled
+    fun toggleSmt() {
+        _smtEnabled.value = !_smtEnabled.value
+        OrtSessions.smtEnabled = _smtEnabled.value
+    }
+
     private fun startPerfMonitor() {
         stopPerfMonitor()
         perfJob = viewModelScope.launch {
@@ -111,7 +121,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                     Class.forName("com.badmintonspeed.app.analysis.OrtSessions")
                         .getDeclaredMethod("getIntraThreads").invoke(null) as Int
                 } catch (_: Exception) { cores.coerceAtMost(8) }
-                _perfInfo.value = "CPU ${cores}核(SMT) · 推理${intra}线程 · 活跃${threads}线程\nNPU:${if (npu) "NNAPI加速" else "CPU"} · 内存${usedMem}/${maxMem}MB"
+                _perfInfo.value = "CPU ${cores}核 · 推理${intra}线程${if (OrtSessions.smtEnabled) "(含SMT)" else "(物理核)"} · 活跃${threads}线程\nNPU:${if (npu) "NNAPI加速" else "CPU"} · 内存${usedMem}/${maxMem}MB"
                 delay(1000)
             }
         }

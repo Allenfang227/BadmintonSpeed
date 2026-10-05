@@ -66,6 +66,7 @@ fun AnalysisScreen(vm: MainViewModel) {
     val totalPct = stage?.totalPercent ?: 0f
     val showPerf by vm.showPerfOverlay.collectAsState()
     val perfInfo by vm.perfInfo.collectAsState()
+    val smtOn by vm.smtEnabled.collectAsState()
 
     Column(Modifier.fillMaxSize().background(Color.White).padding(16.dp)) {
         // ---- 顶部标题 + 超线程悬浮窗开关 ----
@@ -77,6 +78,21 @@ fun AnalysisScreen(vm: MainViewModel) {
                 fontWeight = FontWeight.Bold
             )
             Spacer(Modifier.weight(1f))
+            // v2.42 超线程计算开关（夹在性能旁边）：开=启用SMT虚拟核并行推理，关=仅物理核
+            Box(
+                Modifier
+                    .background(if (smtOn) Color(0xFF10231A) else Color(0xFFE0E0E0), RoundedCornerShape(8.dp))
+                    .clickable { vm.toggleSmt() }
+                    .padding(horizontal = 10.dp, vertical = 5.dp)
+            ) {
+                Text(
+                    if (smtOn) "🧵 超线程开" else "🧵 超线程关",
+                    color = if (smtOn) Color.White else Color(0xFF666666),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+            Spacer(Modifier.width(8.dp))
             // v2.37 超线程实时悬浮窗开关
             Box(
                 Modifier

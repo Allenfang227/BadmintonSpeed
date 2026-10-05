@@ -73,6 +73,11 @@ class VideoAnalyzer {
         style = Paint.Style.STROKE
         strokeWidth = 3f
     }
+    private val candidatePaint = Paint().apply {
+        color = Color.rgb(250, 204, 21)
+        style = Paint.Style.STROKE
+        strokeWidth = 2f
+    }
     private val playerPaint = Paint().apply {
         color = Color.rgb(255, 214, 10)
         style = Paint.Style.STROKE
@@ -651,20 +656,36 @@ class VideoAnalyzer {
             } else {
                 boxes.firstOrNull()?.let { lastBall = it.cx to it.cy }
             }
-            // 实时预览帧：只画跟踪确认的唯一球框（每帧一个框，不叠加历史候选）
-            if (i % 10 == 0) {
-                val bmp = frame.bitmap.copy(Bitmap.Config.ARGB_8888, true)
-                val bcv = Canvas(bmp)
-                if (pos != null) {
-                    val boxSize = 34f
-                    bcv.drawRect(
-                        pos.x - boxSize / 2f, pos.y - boxSize / 2f,
-                        pos.x + boxSize / 2f, pos.y + boxSize / 2f,
-                        ballPaint
-                    )
-                }
-                onPreviewFrame(bmp)
+            // v2.42 实时预览帧：每帧都画检测推理过程（候选球框+跟踪确认框+帧号标注），不再是10帧一次
+            val bmp = frame.bitmap.copy(Bitmap.Config.ARGB_8888, true)
+            val bcv = Canvas(bmp)
+            // 候选框（YOLO/差分检测到的，未跟踪确认的用细黄框）
+            for (b in boxes.take(4)) {
+                val bs = 34f
+                bcv.drawRect(
+                    b.cx - bs / 2f, b.cy - bs / 2f,
+                    b.cx + bs / 2f, b.cy + bs / 2f,
+                    candidatePaint
+                )
             }
+            // 跟踪确认的唯一球框（粗绿框）
+            if (pos != null) {
+                val boxSize = 34f
+                bcv.drawRect(
+                    pos.x - boxSize / 2f, pos.y - boxSize / 2f,
+                    pos.x + boxSize / 2f, pos.y + boxSize / 2f,
+                    ballPaint
+                )
+            }
+            val btp = android.graphics.Paint().apply {
+                color = android.graphics.Color.WHITE; textSize = 22f; isFakeBoldText = true
+                setShadowLayer(5f, 0f, 0f, android.graphics.Color.BLACK)
+            }
+            bcv.drawText(
+                "球检测 帧${frame.index} ${if (pos != null) "✓球(x=${pos.x.toInt()},y=${pos.y.toInt()})" else "搜索中…"} 候选${boxes.size}",
+                14f, 36f, btp
+            )
+            onPreviewFrame(bmp)
             // 步骤映射：前 40% 帧为"背景差分"（全帧扫描），后 60% 为"SVM分类"（跟踪筛选）
             val stepIdx = if (i < framesAll.size * 0.4f) 0 else 1
             val phasePct = 5f + 90f * (i.toFloat() / framesAll.size)
@@ -758,6 +779,31 @@ class VideoAnalyzer {
                             val maxY = vis.maxOf { it.y }
                             posePlayerRects.add(RectF(minX - 30f, minY - 20f, maxX + 30f, maxY + 30f))
                         }
+                        // v2.42 实时预览：把当前帧骨骼骨架+人员框画到预览帧
+                        val bmp = f.bitmap.copy(Bitmap.Config.ARGB_8888, true)
+                        val pcv = Canvas(bmp)
+                        for (r in playerRects) {
+                            pcv.drawRect(r, playerPaint)
+                            pcv.drawText("PERSON", r.left + 4f, r.top - 6f, playerTextPaint)
+                        }
+                        for (skel in skels) {
+                            for (conn in PoseDetector.CONNECTIONS) {
+                                val a = skel.points.getOrNull(conn[0]) ?: continue
+                                val b = skel.points.getOrNull(conn[1]) ?: continue
+                                if (a.visibility > 0.3f && b.visibility > 0.3f) {
+                                    pcv.drawLine(a.x, a.y, b.x, b.y, poseBonePaint)
+                                }
+                            }
+                            for (pt in skel.points) {
+                                if (pt.visibility > 0.3f) pcv.drawCircle(pt.x, pt.y, 4f, poseJointPaint)
+                            }
+                        }
+                        val ptp = android.graphics.Paint().apply {
+                            color = android.graphics.Color.WHITE; textSize = 22f; isFakeBoldText = true
+                            setShadowLayer(5f, 0f, 0f, android.graphics.Color.BLACK)
+                        }
+                        pcv.drawText("骨骼识别 帧${f.index} · ${skels.size}人", 14f, 36f, ptp)
+                        onPreviewFrame(bmp)
                     }
                 }
                 if (i % 20 == 0) {
@@ -838,7 +884,7 @@ class VideoAnalyzer {
             hits = hits,
             summary = summary,
             analysisDurationMs = System.currentTimeMillis() - startTime,
-            appVersion = "2.41.0",
+            appVersion = "2.42.0",
             frameWidth = w,
             frameHeight = h,
             frameAtMaxSpeed = frameAtMax,

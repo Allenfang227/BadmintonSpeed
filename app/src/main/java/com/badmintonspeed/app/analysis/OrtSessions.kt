@@ -19,11 +19,24 @@ import java.util.EnumSet
  */
 object OrtSessions {
 
-    /** 推理算子内部并行线程数（闭区间 3..8，基于逻辑核数，含 SMT 虚拟核） */
-    val intraThreads: Int by lazy {
-        val cores = Runtime.getRuntime().availableProcessors().coerceAtLeast(2)
-        (cores - 2).coerceIn(3, 8)
-    }
+    /**
+     * v2.42 超线程计算开关：用户可随时开/关。
+     * - true ：intraThreads 用逻辑核数（含 ARM SMT 虚拟核，麒麟9000S 大核支持），并行度最高
+     * - false：intraThreads 按物理核一半估算，只走物理核，更省电更稳
+     */
+    @Volatile
+    var smtEnabled: Boolean = true
+
+    /** 推理算子内部并行线程数：受超线程开关控制，运行时实时生效 */
+    val intraThreads: Int
+        get() {
+            val logical = Runtime.getRuntime().availableProcessors().coerceAtLeast(2)
+            return if (smtEnabled) {
+                (logical - 2).coerceIn(3, 8)          // 全逻辑核（含 SMT 虚拟核）
+            } else {
+                ((logical / 2) - 1).coerceIn(2, 4)    // 仅物理核，保守并行
+            }
+        }
 
     /** 不同算子之间的并行线程数（多数模型为顺序图，收益有限，给 2） */
     private const val INTER_THREADS = 2

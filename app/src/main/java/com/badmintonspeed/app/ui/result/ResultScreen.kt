@@ -699,7 +699,7 @@ private fun saveToPublic(context: android.content.Context, result: AnalysisResul
 private fun buildReport(result: AnalysisResult): String {
     val sb = StringBuilder()
     sb.appendLine("杀球测速 BadmintonSpeed 分析报告")
-    sb.appendLine("版本：2.41")
+    sb.appendLine("版本：2.42")
     sb.appendLine("最高球速：${"%.1f".format(result.summary.maxSpeedKmh)} km/h")
     sb.appendLine("平均球速：${"%.1f".format(result.summary.avgSpeedKmh)} km/h")
     sb.appendLine("击球次数：${result.summary.totalHits}（其中杀球 ${result.summary.smashCount} 次）")
