@@ -264,7 +264,10 @@ class VideoAnalyzer {
         // 检测再失败 → 又弹 E101 → 无限循环。
         var courtCornersPx: List<PointF>? = null
         var anchorFrame = frames.first().bitmap
+        // v2.33.1：用户手动标定的角点直接用于本次分析，不再做颜色校验微调（用户标得准，校验反而改歪）
+        var fromUserCalibration = false
         if (manualCourtCorners != null && isValidPrediction(manualCourtCorners, w, h)) {
+            fromUserCalibration = true
             courtCornersPx = manualCourtCorners
             anchorFrame = frames.first().bitmap
             onStage(StageUpdate(AnalysisPhase.COURT, 1, 100f, 29f))
@@ -392,9 +395,9 @@ class VideoAnalyzer {
         // v2.33 场地线两侧颜色校验：AI 标注后自行微调——沿线取两侧像素颜色，
         // 两侧都≈场地主色才正确；断节/错段（黑色/其他色）沿法向重新对齐，
         // 4 条外边界线微调后重新求交得到修正角点（偏移≤帧宽5%，防过拟合）。
-        // 此时 courtCornersPx 已非空（前面 if null 抛 E101），用局部非空变量承接避免智能转换失效。
+        // v2.33.1：用户手动标定的角点（fromUserCalibration）跳过校验——用户标得准，直接用。
         var corners = courtCornersPx!!
-        if (anchorFrame != null) {
+        if (!fromUserCalibration && anchorFrame != null) {
             try {
                 val validated = CourtLineColorValidator.validate(anchorFrame, corners)
                 if (validated.adjusted) corners = validated.corners
@@ -810,7 +813,7 @@ class VideoAnalyzer {
             hits = hits,
             summary = summary,
             analysisDurationMs = System.currentTimeMillis() - startTime,
-            appVersion = "2.33.0",
+            appVersion = "2.33.1",
             frameWidth = w,
             frameHeight = h,
             frameAtMaxSpeed = frameAtMax,
