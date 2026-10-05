@@ -813,7 +813,7 @@ class VideoAnalyzer {
             hits = hits,
             summary = summary,
             analysisDurationMs = System.currentTimeMillis() - startTime,
-            appVersion = "2.33.1",
+            appVersion = "2.34.0",
             frameWidth = w,
             frameHeight = h,
             frameAtMaxSpeed = frameAtMax,

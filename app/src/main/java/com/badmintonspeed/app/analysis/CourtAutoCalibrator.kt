@@ -437,6 +437,60 @@ object CourtAutoCalibrator {
         }
         if (candidates.isEmpty()) return null
 
+        // v2.34 用户方案：白色覆盖后，只保留"长线型 + 宽度基本一致"的直线为场地线。
+        // 天花板灯/广告白条/灯光晕/白墙虽也是白色，但线长不足或宽度突变，在此过滤。
+        // 对每条霍夫直线在白色 mask 上实测：线长（连续白色像素）、线宽（法向两侧连续白色）
+        // 的均值与变异系数；过滤条件：线长≥画面短边12%、线宽1.5~28px、变异系数≤0.75。
+        run {
+            val minLen = minOf(W, H) * 0.12f
+            val kept = ArrayList<Line>()
+            for (l in candidates) {
+                val theta = l.thetaDeg * PI / 180.0
+                val dx = -sin(theta); val dy = cos(theta)   // 线方向
+                val nx = cos(theta); val ny = sin(theta)    // 法向
+                val cx0 = l.rho * cos(theta)
+                val cy0 = l.rho * sin(theta)
+                var whiteCount = 0
+                val widths = ArrayList<Float>()
+                val maxStep = maxOf(W, H)
+                for (dir in listOf(1, -1)) {
+                    var gap = 0
+                    for (step in 0..maxStep) {
+                        val x = (cx0 + dir * step * dx).toInt()
+                        val y = (cy0 + dir * step * dy).toInt()
+                        if (x < 0 || x >= W || y < 0 || y >= H) break
+                        if (closed[y * W + x]) {
+                            whiteCount++; gap = 0
+                            var w = 1
+                            for (s in 1..20) {
+                                val wx = (x + nx * s).toInt(); val wy = (y + ny * s).toInt()
+                                if (wx in 0 until W && wy in 0 until H && closed[wy * W + wx]) w++ else break
+                            }
+                            for (s in 1..20) {
+                                val wx = (x - nx * s).toInt(); val wy = (y - ny * s).toInt()
+                                if (wx in 0 until W && wy in 0 until H && closed[wy * W + wx]) w++ else break
+                            }
+                            widths.add(w.toFloat())
+                        } else {
+                            gap++
+                            if (gap > 10) break
+                        }
+                    }
+                }
+                if (whiteCount < minLen || widths.size < 8) continue
+                val meanW = widths.average().toFloat()
+                if (meanW < 1.5f || meanW > 28f) continue
+                val variance = widths.map { (it - meanW) * (it - meanW) }.average()
+                val cv = sqrt(variance).toFloat() / meanW
+                if (cv > 0.75f) continue
+                kept.add(l)
+            }
+            // 过滤后线太少（<4条无法构成四边形）则回退原候选，避免漏检
+            if (kept.size >= 4) candidates.clear()
+            if (kept.size >= 4) candidates.addAll(kept)
+        }
+        if (candidates.isEmpty()) return null
+
         // 保留高票线：下限降到 8%，且至少保留得票数 >= 3 的线（远景 maxVotes 只有 6~10 时也能保留足够线条）
         val keepVotes = max(3, (maxVotes * params.strongRatio).toInt())
         val strong = candidates.filter { it.votes >= keepVotes }
@@ -510,7 +564,15 @@ object CourtAutoCalibrator {
                 if (!gv.ok) continue
                 val geoScore = gv.score
                 val roiOverlap = if (roiMask != null) quadRoiOverlap(corners, roiMask, W, H) else 1.0
-                val score = fit * 0.5 + geoScore * 0.25 + roiOverlap * 0.25
+                // v2.34 位置约束：场地在画面中下部；四边形中心在画面上方35%以内的大幅降权
+                // （天花板灯/蓝布/上方广告被误检成线时，四边形中心通常在画面上方）
+                val centerY = corners.map { it.y }.average()
+                val posWeight = when {
+                    centerY < H * 0.22 -> 0.25
+                    centerY < H * 0.35 -> 0.6
+                    else -> 1.0
+                }
+                val score = (fit * 0.5 + geoScore * 0.25 + roiOverlap * 0.25) * posWeight
                 candidatesQ.add(Candidate(corners, score, area))
             }
         }
