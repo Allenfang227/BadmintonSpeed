@@ -44,7 +44,13 @@ class ShuttleOnnxDetector(
                 context.assets.open(MODEL_ASSET).use { ins -> ins.copyTo(out) }
             }
         }
-        return env.createSession(cacheFile.absolutePath, OrtSessions.options())
+        // v2.31 NPU（NNAPI）优先挂载，失败自动全局回退 CPU 多线程（防闪退）
+        return runCatching {
+            env.createSession(cacheFile.absolutePath, OrtSessions.options(useNpu = true))
+        }.getOrElse {
+            NpuSupport.markFailed()
+            env.createSession(cacheFile.absolutePath, OrtSessions.options(useNpu = false))
+        }
     }
 
     /**
