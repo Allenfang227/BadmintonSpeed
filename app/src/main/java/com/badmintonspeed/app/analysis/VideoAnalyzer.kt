@@ -550,6 +550,7 @@ class VideoAnalyzer {
 
         for ((i, frame) in framesAll.withIndex()) {
             yield()
+            try {
             // 速度优化（用户要求"视频处理速度过慢"）：YOLO ONNX 推理最贵，
             // 隔帧跑（偶数帧跑 YOLO，奇数帧靠差分+跟踪预测补点），速度约提升 1.6 倍
             val runYolo = i % 2 == 0
@@ -703,6 +704,13 @@ class VideoAnalyzer {
             val phasePct = 5f + 90f * (i.toFloat() / framesAll.size)
             onStage(StageUpdate(AnalysisPhase.SHUTTLE, stepIdx, phasePct, 39f + 49f * (i.toFloat() / framesAll.size),
                 detail = "正在检测第 ${i + 1}/${framesAll.size} 帧 · YOLO+差分双通道"))
+            } catch (fe: Exception) {
+                // v2.42.2 单帧任何异常（NPE/数组越界等）只跳过该帧，绝不中断整段球检测、不冒泡成 E999
+                runCatching {
+                    val crashDir = File(context.filesDir, "logs").apply { mkdirs() }
+                    File(crashDir, "frame_skip.log").appendText("frame=${frame.index} err=${fe}\n")
+                }
+            }
         }
         detector.close()
         onStage(StageUpdate(AnalysisPhase.SHUTTLE, 1, 100f, 88f, done = true))
@@ -901,7 +909,7 @@ class VideoAnalyzer {
             hits = hits,
             summary = summary,
             analysisDurationMs = System.currentTimeMillis() - startTime,
-            appVersion = "2.42.1",
+            appVersion = "2.42.2",
             frameWidth = w,
             frameHeight = h,
             frameAtMaxSpeed = frameAtMax,

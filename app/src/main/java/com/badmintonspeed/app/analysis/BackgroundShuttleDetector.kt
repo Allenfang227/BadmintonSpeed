@@ -100,6 +100,11 @@ class BackgroundShuttleDetector(
         }
 
         // 2) 命中 cell 聚类成 blob
+        // v2.42.2 防卡死：本帧命中 cell 超过画面 15%，说明是大片白色运动区域（广告布/观众白衣/灯光过曝），
+        // 这种帧 blob 聚类要遍历上万 cell 会卡死且结果不可靠，直接放弃本帧差分（交给 YOLO 通道）
+        var hitCellCount = 0
+        for (h in cellHits) if (h >= minCellHits) hitCellCount++
+        if (hitCellCount > cols * rows * 0.15f) return emptyList()
         val visited = BooleanArray(cols * rows)
         val blobs = ArrayList<Blob>()
         for (r in 0 until rows) {
