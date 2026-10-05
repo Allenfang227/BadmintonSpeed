@@ -138,17 +138,21 @@ enum class PerformanceMode(val displayName: String, val analysisFps: Int) {
  * 每个阶段包含细分步骤，分析时逐步骤实时上报。
  */
 enum class AnalysisPhase(val title: String, val steps: List<String>) {
+    DECODE(
+        "视频解码抽帧",
+        listOf("MediaCodec硬件解码", "等间隔采样抽帧", "分辨率缩放")
+    ),
     COURT(
         "场地基准检测",
-        listOf("Canny边缘检测", "霍夫直线变换", "RANSAC迭代拟合", "单应性矩阵计算")
+        listOf("场地颜色识别", "Canny边缘检测", "霍夫直线变换", "RANSAC迭代拟合", "单应性矩阵计算")
     ),
     SHUTTLE(
         "羽毛球检测",
-        listOf("背景差分", "SVM分类")
+        listOf("YOLO推理", "背景差分", "帧间差分", "TrackNet复检", "轨迹跟踪")
     ),
     PLAYER(
         "人员检测",
-        listOf("HOG特征提取", "区域扫描", "SVM判定", "人员ID赋值")
+        listOf("运动区域检测", "MediaPipe骨骼识别", "人员外接框")
     ),
     HIT(
         "击球点检测",

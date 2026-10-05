@@ -200,6 +200,12 @@ fun AnalysisScreen(vm: MainViewModel) {
                         .verticalScroll(rememberScrollState())
                 ) {
                     ModuleCard(
+                        phase = AnalysisPhase.DECODE,
+                        stage = stage,
+                        highlight = stage?.phase == AnalysisPhase.DECODE
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    ModuleCard(
                         phase = AnalysisPhase.COURT,
                         stage = stage,
                         highlight = stage?.phase == AnalysisPhase.COURT

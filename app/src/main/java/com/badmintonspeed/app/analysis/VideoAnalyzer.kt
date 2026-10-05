@@ -214,10 +214,11 @@ class VideoAnalyzer {
                 onProgress = { done, total ->
                     onStage(
                         StageUpdate(
-                            phase = AnalysisPhase.COURT,
-                            stepIndex = 0,
-                            phasePercent = 0f,
-                            totalPercent = 10f * (done.toFloat() / total.coerceAtLeast(1))
+                            phase = AnalysisPhase.DECODE,
+                            stepIndex = if (done < total) 1 else 2,
+                            phasePercent = 100f * done.toFloat() / total.coerceAtLeast(1),
+                            totalPercent = 15f * done.toFloat() / total.coerceAtLeast(1),
+                            detail = "正在解码第 $done/$total 帧 · MediaCodec硬件解码"
                         )
                     )
                 },
@@ -239,17 +240,20 @@ class VideoAnalyzer {
         }
         val w = frames.first().bitmap.width
         val h = frames.first().bitmap.height
+        // v2.38 解码完成，发 DECODE done
+        onStage(StageUpdate(AnalysisPhase.DECODE, 2, 100f, 15f, done = true,
+            detail = "解码完成：共 ${frames.size} 帧 · ${w}x${h}"))
 
-        // ================= 阶段 2：识别场地颜色（10-12%，轻量先验） =================
+        // ================= 阶段 2：识别场地颜色（15-17%，轻量先验） =================
         // v2.23 用户要求"先转换成格式，然后识别一下场地颜色"：
         // 只做中心区域主色分类（绿/蓝/木地板/其他），作为场地检测前的先验展示，秒级完成
-        onStage(StageUpdate(AnalysisPhase.COURT, 0, 10f, 11f))
+        onStage(StageUpdate(AnalysisPhase.COURT, 0, 10f, 16f, detail = "识别场地主色（绿/蓝/木地板）"))
         val courtColor = detectCourtColor(frames.first().bitmap)
         val colorPreview = frames.first().bitmap.copy(Bitmap.Config.ARGB_8888, true)
         val cvColor = Canvas(colorPreview)
         cvColor.drawText("场地颜色：$courtColor", 24f, 56f, courtColorPaint)
         onPreviewFrame(colorPreview)
-        onStage(StageUpdate(AnalysisPhase.COURT, 0, 100f, 12f))
+        onStage(StageUpdate(AnalysisPhase.COURT, 0, 100f, 17f))
         delay(60)
 
         // ================= 阶段 3：场地基准检测（12-32%，全 AI 标注，去掉手工标定） =================
@@ -291,7 +295,7 @@ class VideoAnalyzer {
         try {
             aiSegDetector = CourtSegDetector(context)
             val firstProbe = frames[0].bitmap
-            onStage(StageUpdate(AnalysisPhase.COURT, 0, 3f, 12f))
+            onStage(StageUpdate(AnalysisPhase.COURT, 0, 3f, 18f, detail = "AI场地语义分割（开源模型）"))
             aiSeg = aiSegDetector.segment(firstProbe)
         } catch (e: Exception) {
             aiSeg = null // AI 分割失败不阻塞：回退颜色掩码
@@ -303,8 +307,9 @@ class VideoAnalyzer {
         val diagCount = IntArray(4) // [A漏检, B误检, C拓扑错, D几何歪]
         for ((idx, pi) in sampleList.withIndex()) {
             val probe = frames[pi.coerceIn(0, frames.size - 1)].bitmap
-            val pct = 12f + 20f * ((idx + 1).toFloat() / sampleList.size)
-            onStage(StageUpdate(AnalysisPhase.COURT, 0, pct, 13f + 16f * ((idx + 1).toFloat() / sampleList.size)))
+            val pct = 18f + 20f * ((idx + 1).toFloat() / sampleList.size)
+            onStage(StageUpdate(AnalysisPhase.COURT, 0, pct, 19f + 10f * ((idx + 1).toFloat() / sampleList.size),
+                detail = "多帧场地线检测（${idx + 1}/${sampleList.size}）"))
             val r = try {
                 CourtAutoCalibrator.calibrate(probe, roiPolygon, aiSeg?.mask)
             } catch (e: Exception) {
@@ -810,7 +815,7 @@ class VideoAnalyzer {
             hits = hits,
             summary = summary,
             analysisDurationMs = System.currentTimeMillis() - startTime,
-            appVersion = "2.37.0",
+            appVersion = "2.38.0",
             frameWidth = w,
             frameHeight = h,
             frameAtMaxSpeed = frameAtMax,
