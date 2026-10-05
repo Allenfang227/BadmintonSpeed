@@ -126,8 +126,13 @@ fun AnalysisScreen(vm: MainViewModel) {
                             .background(Color(0xCC000000), RoundedCornerShape(8.dp))
                             .padding(horizontal = 10.dp, vertical = 6.dp)
                     ) {
+                        // v2.39 性能悬浮窗同时显示当前运行的代码（detail）
+                        val curCode = stage?.detail?.takeIf { it.isNotEmpty() }
                         Text(
-                            perfInfo,
+                            buildString {
+                                append(perfInfo)
+                                if (curCode != null) { append("\n── 运行中 ──\n"); append(curCode) }
+                            },
                             color = Color(0xFF00FF88),
                             fontSize = 10.sp,
                             lineHeight = 14.sp,

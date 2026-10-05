@@ -442,7 +442,7 @@ object CourtAutoCalibrator {
         // 对每条霍夫直线在白色 mask 上实测：线长（连续白色像素）、线宽（法向两侧连续白色）
         // 的均值与变异系数；过滤条件：线长≥画面短边12%、线宽1.5~28px、变异系数≤0.75。
         run {
-            val minLen = minOf(W, H) * 0.12f
+            val minLen = minOf(W, H) * 0.08f
             val kept = ArrayList<Line>()
             for (l in candidates) {
                 val theta = l.thetaDeg * PI / 180.0
@@ -477,12 +477,12 @@ object CourtAutoCalibrator {
                         }
                     }
                 }
-                if (whiteCount < minLen || widths.size < 8) continue
+                if (whiteCount < minLen || widths.size < 5) continue
                 val meanW = widths.average().toFloat()
-                if (meanW < 1.5f || meanW > 28f) continue
+                if (meanW < 1.2f || meanW > 40f) continue
                 val variance = widths.map { (it - meanW) * (it - meanW) }.average()
                 val cv = sqrt(variance).toFloat() / meanW
-                if (cv > 0.75f) continue
+                if (cv > 1.0f) continue
                 kept.add(l)
             }
             // 过滤后线太少（<4条无法构成四边形）则回退原候选，避免漏检

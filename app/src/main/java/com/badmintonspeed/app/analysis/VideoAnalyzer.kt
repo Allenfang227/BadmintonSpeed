@@ -328,8 +328,31 @@ class VideoAnalyzer {
                 else if (!CourtAutoCalibrator.verifyLongLines(probe, r)) diagCount[3]++
             }
             // 长实线验证：四边形每边要落在白色长实线上（用户："扫到绿色或蓝色或红色地上的长实线"）
-            if (r != null && CourtAutoCalibrator.verifyLongLines(probe, r)) {
+            val rValid = r != null && CourtAutoCalibrator.verifyLongLines(probe, r)
+            if (rValid && r != null) {
                 candidates.add(r)
+            }
+            // v2.39 左边预览框实时显示 AI 推理过程：把本帧检测到的候选四边形画到帧上
+            if (r != null) {
+                val vis = probe.copy(Bitmap.Config.ARGB_8888, true)
+                val cvc = Canvas(vis)
+                val pp = android.graphics.Paint().apply {
+                    style = android.graphics.Paint.Style.STROKE
+                    strokeWidth = 4f
+                    color = if (rValid) 0xFF00E676.toInt() else 0xFFFF5252.toInt()
+                }
+                val path = android.graphics.Path()
+                r.forEachIndexed { ci, pt ->
+                    if (ci == 0) path.moveTo(pt.x, pt.y) else path.lineTo(pt.x, pt.y)
+                }
+                path.close()
+                cvc.drawPath(path, pp)
+                val tp = android.graphics.Paint().apply {
+                    color = android.graphics.Color.WHITE; textSize = 26f; isFakeBoldText = true
+                    setShadowLayer(6f, 0f, 0f, android.graphics.Color.BLACK)
+                }
+                cvc.drawText("帧${idx + 1}/${sampleList.size} ${if (rValid) "✓候选场地" else "✗几何不符"}", 16f, 40f, tp)
+                onPreviewFrame(vis)
             }
         }
         // 多帧投票（v2.14 借鉴 VLX-Seek"候选区域检索+选择"思路放宽）：
@@ -815,7 +838,7 @@ class VideoAnalyzer {
             hits = hits,
             summary = summary,
             analysisDurationMs = System.currentTimeMillis() - startTime,
-            appVersion = "2.38.0",
+            appVersion = "2.39.0",
             frameWidth = w,
             frameHeight = h,
             frameAtMaxSpeed = frameAtMax,
