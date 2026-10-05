@@ -96,11 +96,12 @@ fun AppRoot(vm: MainViewModel = viewModel()) {
 
     // 结果/分析页：全屏（无侧栏，参考图 6-9 结果页全屏）
     val fullScreen = screen is Screen.Analyzing || screen is Screen.Result ||
-        screen is Screen.Calibrate ||
+        screen is Screen.Calibrate || screen is Screen.CalibrateMode ||
         screen is Screen.TrainMode || screen is Screen.ModelFiles
     if (fullScreen) {
         Box(Modifier.fillMaxSize().background(Background)) {
             when (val s = screen) {
+                is Screen.CalibrateMode -> CalibrateModeScreen(vm)
                 is Screen.Calibrate -> CalibrateScreen(vm)
                 is Screen.TrainMode -> TrainModeScreen(
                     onOpenFiles = { vm.goTo(Screen.ModelFiles) },

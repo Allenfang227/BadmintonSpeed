@@ -37,6 +37,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 /** 页面 */
 sealed interface Screen {
     object Home : Screen
+    object CalibrateMode : Screen  // v2.36：场地标定模式选择（手工/AI）
     object Calibrate : Screen
     object RoiSelect : Screen
     object TrainMode : Screen
@@ -148,14 +149,17 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 startAnalysis()
                 return@launch
             }
-            // 同机位已有持久化标定 → 直接复用，不打扰
-            val saved = CourtLearner(context).predict(firstFrame.width, firstFrame.height)
-            if (saved != null && saved.size == 4) {
-                startAnalysis(manualCourtCorners = saved)
-            } else {
-                _calibrationFrame.value = firstFrame
-                _screen.value = Screen.Calibrate
-            }
+            // v2.36：进入场地标定模式选择页（手工标注 / AI自动标注），不自动进标定
+            _calibrationFrame.value = firstFrame
+            _screen.value = Screen.CalibrateMode
+        }
+    }
+
+    /** v2.36：用户选择场地标定模式 */
+    fun onSelectCalibrateMode(mode: String) {
+        when (mode) {
+            "manual" -> _screen.value = Screen.Calibrate  // 手工标注：进四角标定页，标完直接套模板
+            "ai" -> startAnalysis()  // AI自动标注：直接开始分析，AI检测场地+颜色校验，无需人工
         }
     }
 
