@@ -71,13 +71,14 @@ class ShuttleTracker(
             return null
         }
 
-        // v2.25 静止误检过滤：球每一帧都明显移动，连续 ≥3 帧几乎不动 => 判为光源/背景反光误点
+        // v2.33 静止误检过滤：球每一帧都明显移动，连续 ≥4 帧几乎不动 => 判为光源/背景反光误点
+        // （用户要求："连续4帧范围内持续移动才为羽毛球，位置保持一致说明误检"）
         if (trajectory.isNotEmpty()) {
             val last = trajectory.last()
             val moved = hypot(selected.point.x - last.x, selected.point.y - last.y)
             if (moved < 2f) {
                 staticStreak++
-                if (staticStreak >= 3) {
+                if (staticStreak >= 4) {
                     // 静止误检：清空轨迹，避免把灯光当球
                     trajectory.clear()
                     lastValid = null

@@ -45,9 +45,12 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
@@ -216,6 +219,15 @@ fun ResultScreen(vm: MainViewModel) {
 
             // v2.12：骨骼识别动态叠加（随视频播放一直显示运动员骨架）
             PoseOverlay(
+                poseFrames = result.poseFrames,
+                progressMs = progressMs,
+                frameW = result.frameWidth,
+                frameH = result.frameHeight,
+                modifier = Modifier.fillMaxSize()
+            )
+
+            // v2.33：人物框（两人两色；球检测阶段已排除框内白色，防止球衣误检成球）
+            PersonOverlay(
                 poseFrames = result.poseFrames,
                 progressMs = progressMs,
                 frameW = result.frameWidth,
@@ -448,6 +460,54 @@ fun ResultScreen(vm: MainViewModel) {
                     modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 24.dp)
                 )
             }
+        }
+    }
+}
+
+/** v2.33 人物框：从骨骼关键点取外接矩形，两人两色（框内白色已在球检测阶段排除） */
+@Composable
+private fun PersonOverlay(
+    poseFrames: List<com.badmintonspeed.app.domain.PoseFrameData>,
+    progressMs: Long,
+    frameW: Int,
+    frameH: Int,
+    modifier: Modifier
+) {
+    val personColors = listOf(Color(0xFF22D3EE), Color(0xFFFB923C), Color(0xFFA78BFA), Color(0xFFF472B6))
+    Canvas(modifier) {
+        if (size.width <= 0 || size.height <= 0) return@Canvas
+        val tNow = progressMs / 1000.0
+        val snap = poseFrames.lastOrNull { it.timeSec <= tNow + 0.05 } ?: return@Canvas
+        val vw = frameW.coerceAtLeast(1)
+        val vh = frameH.coerceAtLeast(1)
+        val scale = min(size.width.toFloat() / vw, size.height.toFloat() / vh)
+        val dw = vw * scale
+        val dh = vh * scale
+        val ox = (size.width - dw) / 2f
+        val oy = (size.height - dh) / 2f
+        val labelPaint = android.graphics.Paint().apply {
+            textSize = 30f; isFakeBoldText = true
+        }
+        snap.skeletons.forEachIndexed { idx, sk ->
+            val vis = sk.points.filter { it.visibility > 0.3f }
+            if (vis.size < 5) return@forEachIndexed
+            val minX = vis.minOf { it.x }
+            val maxX = vis.maxOf { it.x }
+            val minY = vis.minOf { it.y }
+            val maxY = vis.maxOf { it.y }
+            val padX = (maxX - minX) * 0.14f
+            val padY = (maxY - minY) * 0.10f
+            val left = ox + (minX - padX) * scale
+            val top = oy + (minY - padY) * scale
+            val right = ox + (maxX + padX) * scale
+            val bottom = oy + (maxY + padY) * scale
+            val color = personColors[idx % personColors.size]
+            drawRect(
+                color = color,
+                topLeft = Offset(left, top),
+                size = Size(right - left, bottom - top),
+                style = Stroke(width = 3.5f)
+            )
         }
     }
 }

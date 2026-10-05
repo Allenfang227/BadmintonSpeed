@@ -389,23 +389,34 @@ class VideoAnalyzer {
         }
         } // v2.27.1: else 分支（全自动检测）闭合
         onStage(StageUpdate(AnalysisPhase.COURT, 3, 92f, 31f))
+        // v2.33 场地线两侧颜色校验：AI 标注后自行微调——沿线取两侧像素颜色，
+        // 两侧都≈场地主色才正确；断节/错段（黑色/其他色）沿法向重新对齐，
+        // 4 条外边界线微调后重新求交得到修正角点（偏移≤帧宽5%，防过拟合）。
+        // 此时 courtCornersPx 已非空（前面 if null 抛 E101），用局部非空变量承接避免智能转换失效。
+        var corners = courtCornersPx!!
+        if (anchorFrame != null) {
+            try {
+                val validated = CourtLineColorValidator.validate(anchorFrame, corners)
+                if (validated.adjusted) corners = validated.corners
+            } catch (e: Exception) { /* 校验失败不影响主流程 */ }
+        }
         // 把本次成功标定纳入学习容器（提高下次自动识别精准度）
         try {
-            CourtLearner(context).save(courtCornersPx, w, h)
+            CourtLearner(context).save(corners, w, h)
         } catch (e: Exception) {
             // 学习容器写入失败不影响分析主流程
         }
-        val homography = Homography.compute(courtCornersPx, StandardCourt.corners)
-        val court = CourtResult(courtCornersPx, homography)
+        val homography = Homography.compute(corners, StandardCourt.corners)
+        val court = CourtResult(corners, homography)
         onCourt(court) // v2.12：分析中实时暴露场地，UI 层常驻叠加黄线（不再闪一下消失）
         // 用 CourtMapper 透视变换画出完整标准场地线（融合自 AI-YuJian-AI：不只是4条外边，还包括中线/发球线/球网等）
         val courtPreview = anchorFrame.copy(Bitmap.Config.ARGB_8888, true)
         val cv = Canvas(courtPreview)
         try {
-            CourtMapper(courtCornersPx).drawFullCourt(cv, courtPaint)
+            CourtMapper(corners).drawFullCourt(cv, courtPaint)
         } catch (e: Exception) {
             // 透视变换异常时回退到只画4条外边
-            val cp = courtCornersPx
+            val cp = corners
             cv.drawLine(cp[0].x, cp[0].y, cp[1].x, cp[1].y, courtPaint)
             cv.drawLine(cp[1].x, cp[1].y, cp[2].x, cp[2].y, courtPaint)
             cv.drawLine(cp[2].x, cp[2].y, cp[3].x, cp[3].y, courtPaint)
@@ -547,7 +558,9 @@ class VideoAnalyzer {
                         } else {
                             BallLearner.match(patch, learnedModel)
                         }
-                        if (sc > 0.58f) extra.add(c)
+                        // v2.33 用户训练模型置信度优先：阈值从 0.58 降到 0.52（用户模型更灵敏），
+                        // 用户要求"用户训练的模型和下载模型一起识别，用户训练模型置信度偏高一点"
+                        if (sc > 0.52f) extra.add(c)
                         if (!patch.isRecycled) patch.recycle()
                     }
                     if (extra.isNotEmpty()) boxes = boxes + extra
@@ -797,7 +810,7 @@ class VideoAnalyzer {
             hits = hits,
             summary = summary,
             analysisDurationMs = System.currentTimeMillis() - startTime,
-            appVersion = "2.32.0",
+            appVersion = "2.33.0",
             frameWidth = w,
             frameHeight = h,
             frameAtMaxSpeed = frameAtMax,
