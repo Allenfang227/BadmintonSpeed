@@ -38,6 +38,9 @@ class BackgroundShuttleDetector(
     private val staticCells = HashSet<Int>()
     // cell 连续静止计数
     private val stillCounts = HashMap<Int, Int>()
+    // v2.42 复用缓冲：避免每帧新建 IntArray(w*h) 引发 GC 卡死（用户反馈帧间差分处卡死）
+    private var grayCache: IntArray? = null
+    private var pixelsCache: IntArray? = null
 
     /** 用一帧学习背景（前 bgFrames 帧调用，累积均值） */
     fun learn(frame: Bitmap) {
@@ -188,10 +191,18 @@ class BackgroundShuttleDetector(
     }
 
     private fun toGray(frame: Bitmap, w: Int, h: Int): IntArray {
-        val pixels = IntArray(w * h)
+        var pixels = pixelsCache
+        if (pixels == null || pixels.size < w * h) {
+            pixels = IntArray(w * h)
+            pixelsCache = pixels
+        }
+        var gray = grayCache
+        if (gray == null || gray.size < w * h) {
+            gray = IntArray(w * h)
+            grayCache = gray
+        }
         frame.getPixels(pixels, 0, w, 0, 0, w, h)
-        val gray = IntArray(w * h)
-        for (i in pixels.indices) {
+        for (i in 0 until w * h) {
             val p = pixels[i]
             val r = p shr 16 and 0xFF
             val g = p shr 8 and 0xFF

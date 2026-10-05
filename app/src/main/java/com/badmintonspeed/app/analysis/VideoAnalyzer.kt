@@ -568,7 +568,9 @@ class VideoAnalyzer {
             prevDiffFrame = frame.bitmap
             if (boxes.isEmpty()) {
                 // YOLO 没检出 → 背景差分 + 帧间差分补充（白色运动点，多帧确认）
-                val bgCands = bgDetector.detectMovingWhite(frame.bitmap)
+                val bgCands = try {
+                    bgDetector.detectMovingWhite(frame.bitmap)
+                } catch (e: Exception) { emptyList() } // v2.42 单帧差分异常跳过，不中断整段分析
                 val merged = bgCands + diffCands
                 if (merged.isNotEmpty()) {
                     boxes = boxes + merged
@@ -623,7 +625,7 @@ class VideoAnalyzer {
                     }
                 }
             } else {
-                bgDetector.updateBackground(frame.bitmap) // 球出现后背景滚动自适应
+                try { bgDetector.updateBackground(frame.bitmap) } catch (e: Exception) { /* 单帧异常忽略 */ }
             }
             // 人员位置排除：落在球员框内的候选丢弃（白色衣服/球拍不是球）
             if (boxes.isNotEmpty()) {
@@ -656,36 +658,46 @@ class VideoAnalyzer {
             } else {
                 boxes.firstOrNull()?.let { lastBall = it.cx to it.cy }
             }
-            // v2.42 实时预览帧：每帧都画检测推理过程（候选球框+跟踪确认框+帧号标注），不再是10帧一次
-            val bmp = frame.bitmap.copy(Bitmap.Config.ARGB_8888, true)
-            val bcv = Canvas(bmp)
-            // 候选框（YOLO/差分检测到的，未跟踪确认的用细黄框）
-            for (b in boxes.take(4)) {
-                val bs = 34f
-                bcv.drawRect(
-                    b.cx - bs / 2f, b.cy - bs / 2f,
-                    b.cx + bs / 2f, b.cy + bs / 2f,
-                    candidatePaint
+            // v2.42 实时预览帧：每帧都画检测推理过程（候选球框+跟踪确认框+帧号标注），不再是10帧一次。
+            // v2.42.1 预览改半分辨率绘制：原图copy每帧约1.4MB、数百帧累计数百MB分配会引发GC卡死，
+            // 缩半后内存降至1/4，推理过程仍逐帧可见。
+            val bmp = try {
+                val src = frame.bitmap
+                val sw = src.width / 2
+                val sh = src.height / 2
+                val scaled = Bitmap.createScaledBitmap(src, sw, sh, true)
+                scaled
+            } catch (e: Exception) { null }
+            if (bmp != null) {
+                val bcv = Canvas(bmp)
+                // 候选框（YOLO/差分检测到的，未跟踪确认的用细黄框）
+                for (b in boxes.take(4)) {
+                    val bs = 17f // 原34px框在1/2缩放下对应17px
+                    bcv.drawRect(
+                        b.cx / 2f - bs / 2f, b.cy / 2f - bs / 2f,
+                        b.cx / 2f + bs / 2f, b.cy / 2f + bs / 2f,
+                        candidatePaint
+                    )
+                }
+                // 跟踪确认的唯一球框（粗绿框）
+                if (pos != null) {
+                    val boxSize = 17f
+                    bcv.drawRect(
+                        pos.x / 2f - boxSize / 2f, pos.y / 2f - boxSize / 2f,
+                        pos.x / 2f + boxSize / 2f, pos.y / 2f + boxSize / 2f,
+                        ballPaint
+                    )
+                }
+                val btp = android.graphics.Paint().apply {
+                    color = android.graphics.Color.WHITE; textSize = 18f; isFakeBoldText = true
+                    setShadowLayer(5f, 0f, 0f, android.graphics.Color.BLACK)
+                }
+                bcv.drawText(
+                    "球检测 帧${frame.index} ${if (pos != null) "✓球(x=${pos.x.toInt()},y=${pos.y.toInt()})" else "搜索中…"} 候选${boxes.size}",
+                    10f, 28f, btp
                 )
+                onPreviewFrame(bmp)
             }
-            // 跟踪确认的唯一球框（粗绿框）
-            if (pos != null) {
-                val boxSize = 34f
-                bcv.drawRect(
-                    pos.x - boxSize / 2f, pos.y - boxSize / 2f,
-                    pos.x + boxSize / 2f, pos.y + boxSize / 2f,
-                    ballPaint
-                )
-            }
-            val btp = android.graphics.Paint().apply {
-                color = android.graphics.Color.WHITE; textSize = 22f; isFakeBoldText = true
-                setShadowLayer(5f, 0f, 0f, android.graphics.Color.BLACK)
-            }
-            bcv.drawText(
-                "球检测 帧${frame.index} ${if (pos != null) "✓球(x=${pos.x.toInt()},y=${pos.y.toInt()})" else "搜索中…"} 候选${boxes.size}",
-                14f, 36f, btp
-            )
-            onPreviewFrame(bmp)
             // 步骤映射：前 40% 帧为"背景差分"（全帧扫描），后 60% 为"SVM分类"（跟踪筛选）
             val stepIdx = if (i < framesAll.size * 0.4f) 0 else 1
             val phasePct = 5f + 90f * (i.toFloat() / framesAll.size)
@@ -779,31 +791,36 @@ class VideoAnalyzer {
                             val maxY = vis.maxOf { it.y }
                             posePlayerRects.add(RectF(minX - 30f, minY - 20f, maxX + 30f, maxY + 30f))
                         }
-                        // v2.42 实时预览：把当前帧骨骼骨架+人员框画到预览帧
-                        val bmp = f.bitmap.copy(Bitmap.Config.ARGB_8888, true)
-                        val pcv = Canvas(bmp)
-                        for (r in playerRects) {
-                            pcv.drawRect(r, playerPaint)
-                            pcv.drawText("PERSON", r.left + 4f, r.top - 6f, playerTextPaint)
-                        }
-                        for (skel in skels) {
-                            for (conn in PoseDetector.CONNECTIONS) {
-                                val a = skel.points.getOrNull(conn[0]) ?: continue
-                                val b = skel.points.getOrNull(conn[1]) ?: continue
-                                if (a.visibility > 0.3f && b.visibility > 0.3f) {
-                                    pcv.drawLine(a.x, a.y, b.x, b.y, poseBonePaint)
+                        // v2.42 实时预览：把当前帧骨骼骨架+人员框画到预览帧（半分辨率控制内存）
+                        val bmp = try {
+                            val src = f.bitmap
+                            Bitmap.createScaledBitmap(src, src.width / 2, src.height / 2, true)
+                        } catch (e: Exception) { null }
+                        if (bmp != null) {
+                            val pcv = Canvas(bmp)
+                            for (r in playerRects) {
+                                pcv.drawRect(RectF(r.left / 2f, r.top / 2f, r.right / 2f, r.bottom / 2f), playerPaint)
+                                pcv.drawText("PERSON", r.left / 2f + 4f, r.top / 2f - 6f, playerTextPaint)
+                            }
+                            for (skel in skels) {
+                                for (conn in PoseDetector.CONNECTIONS) {
+                                    val a = skel.points.getOrNull(conn[0]) ?: continue
+                                    val b = skel.points.getOrNull(conn[1]) ?: continue
+                                    if (a.visibility > 0.3f && b.visibility > 0.3f) {
+                                        pcv.drawLine(a.x / 2f, a.y / 2f, b.x / 2f, b.y / 2f, poseBonePaint)
+                                    }
+                                }
+                                for (pt in skel.points) {
+                                    if (pt.visibility > 0.3f) pcv.drawCircle(pt.x / 2f, pt.y / 2f, 2.5f, poseJointPaint)
                                 }
                             }
-                            for (pt in skel.points) {
-                                if (pt.visibility > 0.3f) pcv.drawCircle(pt.x, pt.y, 4f, poseJointPaint)
+                            val ptp = android.graphics.Paint().apply {
+                                color = android.graphics.Color.WHITE; textSize = 18f; isFakeBoldText = true
+                                setShadowLayer(5f, 0f, 0f, android.graphics.Color.BLACK)
                             }
+                            pcv.drawText("骨骼识别 帧${f.index} · ${skels.size}人", 10f, 28f, ptp)
+                            onPreviewFrame(bmp)
                         }
-                        val ptp = android.graphics.Paint().apply {
-                            color = android.graphics.Color.WHITE; textSize = 22f; isFakeBoldText = true
-                            setShadowLayer(5f, 0f, 0f, android.graphics.Color.BLACK)
-                        }
-                        pcv.drawText("骨骼识别 帧${f.index} · ${skels.size}人", 14f, 36f, ptp)
-                        onPreviewFrame(bmp)
                     }
                 }
                 if (i % 20 == 0) {
@@ -884,7 +901,7 @@ class VideoAnalyzer {
             hits = hits,
             summary = summary,
             analysisDurationMs = System.currentTimeMillis() - startTime,
-            appVersion = "2.42.0",
+            appVersion = "2.42.1",
             frameWidth = w,
             frameHeight = h,
             frameAtMaxSpeed = frameAtMax,
