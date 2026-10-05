@@ -250,19 +250,29 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 )
                 _result.value = result
 
-                // 自动保存历史
-                val record = AnalysisRecord(
-                    id = HistoryRepository.newId(),
-                    title = HistoryRepository.defaultTitle(System.currentTimeMillis(), file.name),
-                    videoName = file.name,
-                    createdAt = System.currentTimeMillis(),
-                    maxSpeedKmh = result.summary.maxSpeedKmh,
-                    totalHits = result.summary.totalHits,
-                    smashCount = result.summary.smashCount,
-                    resultJson = ResultJson.encode(result)
-                )
-                historyRepo.save(record)
-                loadHistory()
+                // v2.41：自动保存历史改为非阻塞——保存失败绝不影响进入结果页（此前 encode/save 抛异常会踢回首页弹 E999）
+                runCatching {
+                    val record = AnalysisRecord(
+                        id = HistoryRepository.newId(),
+                        title = HistoryRepository.defaultTitle(System.currentTimeMillis(), file.name),
+                        videoName = file.name,
+                        createdAt = System.currentTimeMillis(),
+                        maxSpeedKmh = result.summary.maxSpeedKmh,
+                        totalHits = result.summary.totalHits,
+                        smashCount = result.summary.smashCount,
+                        resultJson = ResultJson.encode(result)
+                    )
+                    historyRepo.save(record)
+                    loadHistory()
+                }.onFailure { e ->
+                    // 只写日志文件，不拦截结果页
+                    runCatching {
+                        val crashDir = File(context.filesDir, "logs").apply { mkdirs() }
+                        File(crashDir, "history_save.log").appendText(
+                            "time=${System.currentTimeMillis()} err=${e}\n"
+                        )
+                    }
+                }
                 _screen.value = Screen.Result
             } catch (ce: CancellationException) {
                 throw ce
@@ -277,11 +287,19 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                 }
             } catch (e: Exception) {
                 if (!cancelFlag.get()) {
+                    // v2.41：E999 写完整堆栈到 logs/ 文件（用户可在文件管理查看真实原因），弹窗显示异常类名便于定位
+                    val stack = e.stackTraceToString()
+                    runCatching {
+                        val crashDir = File(context.filesDir, "logs").apply { mkdirs() }
+                        File(crashDir, "E999.log").appendText(
+                            "time=${System.currentTimeMillis()}\n$stack\n---\n"
+                        )
+                    }
                     _error.value = AnalysisError(
                         code = "E999",
                         title = "分析失败",
-                        detail = e.message ?: "未知错误，请重试",
-                        threshold = "请重试或更换视频"
+                        detail = "异常：${e.javaClass.simpleName} ${e.message ?: ""}".trim(),
+                        threshold = "详见文件管理：Android/data/…/files/logs/E999.log"
                     )
                     _screen.value = Screen.Home
                 }
