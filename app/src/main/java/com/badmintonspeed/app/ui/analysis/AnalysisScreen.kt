@@ -64,15 +64,34 @@ fun AnalysisScreen(vm: MainViewModel) {
     val court by vm.courtResult.collectAsState()
 
     val totalPct = stage?.totalPercent ?: 0f
+    val showPerf by vm.showPerfOverlay.collectAsState()
+    val perfInfo by vm.perfInfo.collectAsState()
 
     Column(Modifier.fillMaxSize().background(Color.White).padding(16.dp)) {
-        // ---- 顶部标题 ----
-        Text(
-            "上传视频测速",
-            color = Primary,
-            fontSize = 22.sp,
-            fontWeight = FontWeight.Bold
-        )
+        // ---- 顶部标题 + 超线程悬浮窗开关 ----
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                "上传视频测速",
+                color = Primary,
+                fontSize = 22.sp,
+                fontWeight = FontWeight.Bold
+            )
+            Spacer(Modifier.weight(1f))
+            // v2.37 超线程实时悬浮窗开关
+            Box(
+                Modifier
+                    .background(if (showPerf) Primary else Color(0xFFE0E0E0), RoundedCornerShape(8.dp))
+                    .clickable { vm.togglePerfOverlay() }
+                    .padding(horizontal = 10.dp, vertical = 5.dp)
+            ) {
+                Text(
+                    if (showPerf) "⚡ 性能中" else "⚡ 性能",
+                    color = if (showPerf) Color.White else Color(0xFF666666),
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+        }
         Spacer(Modifier.height(10.dp))
 
         Row(Modifier.fillMaxSize()) {
@@ -98,6 +117,24 @@ fun AnalysisScreen(vm: MainViewModel) {
                     frameH = preview?.height ?: 720,
                     modifier = Modifier.fillMaxSize()
                 )
+                // v2.37 超线程实时悬浮窗（左上角，可开关）
+                if (showPerf && perfInfo.isNotEmpty()) {
+                    Box(
+                        Modifier
+                            .align(Alignment.TopStart)
+                            .padding(8.dp)
+                            .background(Color(0xCC000000), RoundedCornerShape(8.dp))
+                            .padding(horizontal = 10.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            perfInfo,
+                            color = Color(0xFF00FF88),
+                            fontSize = 10.sp,
+                            lineHeight = 14.sp,
+                            fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
+                        )
+                    }
+                }
                 // 倍速按钮（可点击切换，图2/图3 左下角 1.0x）
                 val speeds = listOf("0.5x", "1.0x", "1.5x", "2.0x")
                 var speedIdx by remember { mutableStateOf(1) }
@@ -199,11 +236,12 @@ fun AnalysisScreen(vm: MainViewModel) {
                     }
                 }
                 Spacer(Modifier.height(4.dp))
-                // v2.30 不显示不准的预估时间，改为"当前正在进行的项目（阶段·步骤）"
+                // v2.37 底部显示当前正在处理的具体内容（detail 优先，无 detail 时显示阶段·步骤）
+                val curDetail = stage?.detail?.takeIf { it.isNotEmpty() }
                 val curPhaseTitle = stage?.phase?.title ?: "准备中"
                 val curStepName = stage?.let { s -> s.phase.steps.getOrNull(s.stepIndex) }
                 Text(
-                    if (curStepName != null) "当前：$curPhaseTitle · $curStepName" else "当前：$curPhaseTitle",
+                    curDetail ?: (if (curStepName != null) "当前：$curPhaseTitle · $curStepName" else "当前：$curPhaseTitle"),
                     color = WDesc,
                     fontSize = 12.sp
                 )

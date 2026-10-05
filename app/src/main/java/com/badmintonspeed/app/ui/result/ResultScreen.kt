@@ -490,7 +490,8 @@ private fun PersonOverlay(
     Canvas(modifier) {
         if (size.width <= 0 || size.height <= 0) return@Canvas
         val tNow = progressMs / 1000.0
-        val snap = poseFrames.lastOrNull { it.timeSec <= tNow + 0.05 } ?: return@Canvas
+        // v2.37 修复：找 timeSec 最接近当前播放进度的骨骼帧（原 lastOrNull{<=tNow+0.05} 在视频开头会找不到帧）
+        val snap = poseFrames.minByOrNull { kotlin.math.abs(it.timeSec - tNow) } ?: return@Canvas
         val vw = frameW.coerceAtLeast(1)
         val vh = frameH.coerceAtLeast(1)
         val scale = min(size.width.toFloat() / vw, size.height.toFloat() / vh)

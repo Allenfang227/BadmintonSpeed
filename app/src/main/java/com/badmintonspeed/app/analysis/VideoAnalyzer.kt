@@ -203,8 +203,6 @@ class VideoAnalyzer {
         // 用户框选完场地不想再等一次解码。
         var videoInfo: VideoInfo? = null
         val frames: List<VideoFrameExtractor.AnalyzedFrame> = if (reuseFrames != null && reuseFrames.size >= 8) {
-            onStage(StageUpdate(AnalysisPhase.COURT, 0, 0f, 3f))
-            onStage(StageUpdate(AnalysisPhase.COURT, 0, 100f, 10f, done = true))
             onPreviewFrame(reuseFrames.first().bitmap)
             reuseFrames
         } else {
@@ -454,8 +452,29 @@ class VideoAnalyzer {
         }
         val framesAll = deduped
 
-        // ================= 阶段 4：羽毛球检测（35-88%，YOLO11 ONNX 真实检测） =================
-        onStage(StageUpdate(AnalysisPhase.SHUTTLE, 0, 5f, 35f))
+        // ================= 阶段 4：人员检测（v2.37 先算好球员框，球检测时排除人员区域，严格串行） =================
+        onStage(StageUpdate(AnalysisPhase.PLAYER, 0, 5f, 35f))
+        var playerRects = try { detectPlayers(framesAll) { stepIdx, pct ->
+            onStage(StageUpdate(AnalysisPhase.PLAYER, stepIdx, pct, 35f + 4f * pct / 100f))
+        } } catch (e: Exception) { emptyList() }
+        onStage(StageUpdate(AnalysisPhase.PLAYER, 3, 100f, 39f, done = true))
+        val excludedRects = playerRects.map { r ->
+            android.graphics.RectF(
+                (r.left - r.width() * 0.3f).coerceAtLeast(0f),
+                (r.top - r.height() * 0.3f).coerceAtLeast(0f),
+                (r.right + r.width() * 0.3f).coerceAtMost(w.toFloat()),
+                (r.bottom + r.height() * 0.3f).coerceAtMost(h.toFloat())
+            )
+        }
+        fun inPlayerRect(x: Float, y: Float): Boolean {
+            for (r in excludedRects) {
+                if (x in r.left..r.right && y in r.top..r.bottom) return true
+            }
+            return false
+        }
+
+        // ================= 阶段 5：羽毛球检测（YOLO11 ONNX 真实检测 + 背景差分 + 帧间差分） =================
+        onStage(StageUpdate(AnalysisPhase.SHUTTLE, 0, 5f, 40f))
         val detector = ShuttleOnnxDetector(context)
         // 融合自 AI-YuJian-AI ShuttlecockTracker：帧间跳跃门限+速度预测+丢帧容忍+检测框面积/宽高比过滤+ROI限制
         val shuttleTracker = ShuttleTracker(
@@ -485,30 +504,6 @@ class VideoAnalyzer {
         // 前 bgFrames 帧学背景（视频开头通常为空场地/球还没动）
         for ((i, frame) in framesAll.withIndex()) {
             if (i < 12) bgDetector.learn(frame.bitmap)
-        }
-
-        // v2.13 人员位置排除（用户要求："识别出人员位置、场地位置和球网位置的时候，
-        // 判断羽毛球可能存在的位置……去除掉人员检测的人员位置"）：
-        // 帧差运动区域即运动员位置，白色衣服/球拍会被帧差和背景差分误检成球。
-        // 提前算好球员框（膨胀1.6倍），球候选落入球员框内的直接丢弃。
-        onStage(StageUpdate(AnalysisPhase.PLAYER, 0, 5f, 36f))
-        var playerRects = try { detectPlayers(framesAll) { stepIdx, pct ->
-            onStage(StageUpdate(AnalysisPhase.PLAYER, stepIdx, pct, 35f + 4f * pct / 100f))
-        } } catch (e: Exception) { emptyList() }
-        onStage(StageUpdate(AnalysisPhase.PLAYER, 3, 100f, 39f, done = true))
-        val excludedRects = playerRects.map { r ->
-            android.graphics.RectF(
-                (r.left - r.width() * 0.3f).coerceAtLeast(0f),
-                (r.top - r.height() * 0.3f).coerceAtLeast(0f),
-                (r.right + r.width() * 0.3f).coerceAtMost(w.toFloat()),
-                (r.bottom + r.height() * 0.3f).coerceAtMost(h.toFloat())
-            )
-        }
-        fun inPlayerRect(x: Float, y: Float): Boolean {
-            for (r in excludedRects) {
-                if (x in r.left..r.right && y in r.top..r.bottom) return true
-            }
-            return false
         }
 
         // v2.13 帧间差分检测器（用户要求："AI 比较每两帧之间……移动的白色羽毛球"）：
@@ -645,7 +640,8 @@ class VideoAnalyzer {
             // 步骤映射：前 40% 帧为"背景差分"（全帧扫描），后 60% 为"SVM分类"（跟踪筛选）
             val stepIdx = if (i < framesAll.size * 0.4f) 0 else 1
             val phasePct = 5f + 90f * (i.toFloat() / framesAll.size)
-            onStage(StageUpdate(AnalysisPhase.SHUTTLE, stepIdx, phasePct, 39f + 49f * (i.toFloat() / framesAll.size)))
+            onStage(StageUpdate(AnalysisPhase.SHUTTLE, stepIdx, phasePct, 39f + 49f * (i.toFloat() / framesAll.size),
+                detail = "正在检测第 ${i + 1}/${framesAll.size} 帧 · YOLO+差分双通道"))
         }
         detector.close()
         onStage(StageUpdate(AnalysisPhase.SHUTTLE, 1, 100f, 88f, done = true))
@@ -738,7 +734,8 @@ class VideoAnalyzer {
                 }
                 if (i % 20 == 0) {
                     val pct = 10f + 80f * (i.toFloat() / framesAll.size)
-                    onStage(StageUpdate(AnalysisPhase.PLAYER, 2, pct, 91f + 4f * pct / 100f))
+                    onStage(StageUpdate(AnalysisPhase.PLAYER, 2, pct, 91f + 4f * pct / 100f,
+                        detail = "骨骼识别第 ${i + 1}/${framesAll.size} 帧 · MediaPipe Pose"))
                 }
                 yield()
             }
@@ -813,7 +810,7 @@ class VideoAnalyzer {
             hits = hits,
             summary = summary,
             analysisDurationMs = System.currentTimeMillis() - startTime,
-            appVersion = "2.36.0",
+            appVersion = "2.37.0",
             frameWidth = w,
             frameHeight = h,
             frameAtMaxSpeed = frameAtMax,

@@ -27,6 +27,7 @@ import com.badmintonspeed.app.domain.StageUpdate
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -78,6 +79,44 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     // v2.12：场地标定结果常驻（分析中实时更新，UI 层黄线一直叠加不闪）
     private val _courtResult = MutableStateFlow<CourtResult?>(null)
     val courtResult: StateFlow<CourtResult?> = _courtResult
+
+    // v2.37 超线程实时悬浮窗：可开关 + 每秒刷新 CPU/线程/NPU/内存
+    private val _showPerfOverlay = MutableStateFlow(false)
+    val showPerfOverlay: StateFlow<Boolean> = _showPerfOverlay
+    private val _perfInfo = MutableStateFlow("")
+    val perfInfo: StateFlow<String> = _perfInfo
+    private var perfJob: kotlinx.coroutines.Job? = null
+    fun togglePerfOverlay() {
+        _showPerfOverlay.value = !_showPerfOverlay.value
+        if (_showPerfOverlay.value) startPerfMonitor() else stopPerfMonitor()
+    }
+    private fun startPerfMonitor() {
+        stopPerfMonitor()
+        perfJob = viewModelScope.launch {
+            while (true) {
+                val rt = Runtime.getRuntime()
+                val cores = rt.availableProcessors()
+                val threads = Thread.activeCount()
+                val usedMem = (rt.totalMemory() - rt.freeMemory()) / 1024 / 1024
+                val maxMem = rt.maxMemory() / 1024 / 1024
+                val npu = try {
+                    Class.forName("com.badmintonspeed.app.analysis.OrtSessions")
+                        .getDeclaredField("NpuSupport").apply { isAccessible = true }
+                        .let { f ->
+                            val obj = f.get(null)
+                            obj?.javaClass?.getDeclaredField("working")?.apply { isAccessible = true }?.getBoolean(obj) == true
+                        }
+                } catch (_: Exception) { false }
+                val intra = try {
+                    Class.forName("com.badmintonspeed.app.analysis.OrtSessions")
+                        .getDeclaredMethod("getIntraThreads").invoke(null) as Int
+                } catch (_: Exception) { cores.coerceAtMost(8) }
+                _perfInfo.value = "CPU ${cores}核(SMT) · 推理${intra}线程 · 活跃${threads}线程\nNPU:${if (npu) "NNAPI加速" else "CPU"} · 内存${usedMem}/${maxMem}MB"
+                delay(1000)
+            }
+        }
+    }
+    private fun stopPerfMonitor() { perfJob?.cancel(); perfJob = null }
 
     // 结果与错误（错误带错误码，对应不同失败原因）
     private val _result = MutableStateFlow<AnalysisResult?>(null)

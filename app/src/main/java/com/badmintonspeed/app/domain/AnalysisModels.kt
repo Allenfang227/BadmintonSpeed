@@ -162,7 +162,8 @@ data class StageUpdate(
     val stepIndex: Int,        // 当前执行步骤序号（0 起）
     val phasePercent: Float,   // 本模块进度 0-100
     val totalPercent: Float,   // 总体进度 0-100
-    val done: Boolean = false // 模块是否完成
+    val done: Boolean = false, // 模块是否完成
+    val detail: String = ""    // v2.37 当前处理的具体内容（如"正在检测第45/161帧"）
 )
 
 /**
