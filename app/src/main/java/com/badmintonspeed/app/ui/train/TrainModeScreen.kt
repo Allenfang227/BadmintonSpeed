@@ -46,9 +46,21 @@ fun TrainModeScreen(onOpenFiles: () -> Unit, onBack: () -> Unit) {
     }
     var busy by remember { mutableStateOf(false) }
 
+    // ============ 功能 0：导入以前训练好的 zip / onnx 模型（更新版本后一键恢复） ============
+    val importLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri: Uri? ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        busy = true
+        log = "正在导入模型…"
+        val msg = CourtModelRepo.importFromUri(context, uri)
+        // 导入后刷新计数与模型信息
+        sampleCount = samplesDir.listFiles()?.size ?: 0
+        modelInfo = loadModelInfo(modelDir)
+        busy = false
+        log += "\n$msg"
+    }
+
     // ============ 功能 1：导入图片（只收集样本，不训练） ============
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris: List<Uri> ->
-        if (uris.isEmpty()) return@rememberLauncherForActivityResult
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetMultipleContents()) { uris: List<Uri> ->        if (uris.isEmpty()) return@rememberLauncherForActivityResult
         busy = true
         log = "正在解析 ${uris.size} 张图片中的红框…"
         var added = 0; var failed = 0
@@ -161,6 +173,10 @@ fun TrainModeScreen(onOpenFiles: () -> Unit, onBack: () -> Unit) {
                         Spacer(Modifier.height(20.dp))
                         Button(onClick = onOpenFiles, Modifier.fillMaxWidth()) { Text("打开模型目录（查看/转发）") }
                         Spacer(Modifier.height(10.dp))
+                        OutlinedButton(onClick = {
+                            importLauncher.launch(arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream", "*/*"))
+                        }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("导入 zip / onnx 模型（恢复旧模型）") }
+                        Spacer(Modifier.height(10.dp))
                         Button(onClick = {
                             val ok = CourtModelRepo.exportToPublic(context, null)
                             log += if (ok) "\n已同步全部文件到公共目录" else "\n公共目录同步失败"
@@ -224,6 +240,10 @@ fun TrainModeScreen(onOpenFiles: () -> Unit, onBack: () -> Unit) {
                         )
                         Spacer(Modifier.height(20.dp))
                         Button(onClick = onOpenFiles, Modifier.fillMaxWidth()) { Text("打开模型目录（查看/转发）") }
+                        Spacer(Modifier.height(10.dp))
+                        OutlinedButton(onClick = {
+                            importLauncher.launch(arrayOf("application/zip", "application/x-zip-compressed", "application/octet-stream", "*/*"))
+                        }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("导入 zip / onnx 模型（恢复旧模型）") }
                         Spacer(Modifier.height(10.dp))
                         Button(onClick = {
                             val ok = CourtModelRepo.exportToPublic(context, null)

@@ -429,12 +429,8 @@ fun ResultScreen(vm: MainViewModel) {
                     // v2.32 修复：下载改后台线程（此前主线程复制百 MB 视频会 ANR/失败）
                     scope.launch {
                         Toast.makeText(context, "正在保存到 下载/BadmintonSpeed/…", Toast.LENGTH_SHORT).show()
-                        val ok = withContext(Dispatchers.IO) { saveToPublic(context, result) }
-                        Toast.makeText(
-                            context,
-                            if (ok) "已保存到 下载/BadmintonSpeed/" else "导出失败：请检查存储空间",
-                            Toast.LENGTH_LONG
-                        ).show()
+                        val msg = withContext(Dispatchers.IO) { saveToPublic(context, result) }
+                        Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
                     }
                 }
             }
@@ -631,33 +627,48 @@ private fun TrajectoryOverlay(result: AnalysisResult, progressMs: Long, modifier
 }
 
 /** 导出视频 + 分析数据到公共 Downloads（后台线程调用，返回是否成功） */
-private fun saveToPublic(context: android.content.Context, result: AnalysisResult): Boolean {
-    return try {
+private fun saveToPublic(context: android.content.Context, result: AnalysisResult): String {
+    // v2.40：视频与报告分开保存，返回具体结果（不再笼统报"检查存储空间"）
+    val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+    val resolver = context.contentResolver
+    var videoOk = false
+    var reportOk = false
+    try {
+        // ---------- 视频 ----------
         val videoFile = File(result.videoInfo.path)
-        if (!videoFile.exists()) return false
-        val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-        val resolver = context.contentResolver
-
-        // 视频
-        val videoValues = ContentValues().apply {
-            put(MediaStore.MediaColumns.DISPLAY_NAME, "BadmintonSpeed_${stamp}.mp4")
-            put(MediaStore.MediaColumns.MIME_TYPE, "video/mp4")
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-                put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/BadmintonSpeed")
-                put(MediaStore.MediaColumns.IS_PENDING, 1)
+        if (!videoFile.exists()) {
+            // 原始临时文件可能已被清理：只保存报告
+            videoOk = false
+        } else {
+            // 空间预检：可用空间需 > 视频大小的 1.1 倍
+            val needBytes = (videoFile.length() * 1.1).toLong()
+            val freeBytes = android.os.StatFs(android.os.Environment.getDataDirectory().path).let {
+                it.availableBytes
+            }
+            if (freeBytes < needBytes) {
+                return "导出失败：存储空间不足（需约 ${needBytes / 1024 / 1024}MB，可用 ${freeBytes / 1024 / 1024}MB），请清理后重试"
+            }
+            val videoValues = ContentValues().apply {
+                put(MediaStore.MediaColumns.DISPLAY_NAME, "BadmintonSpeed_${stamp}.mp4")
+                put(MediaStore.MediaColumns.MIME_TYPE, "video/mp4")
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/BadmintonSpeed")
+                    put(MediaStore.MediaColumns.IS_PENDING, 1)
+                }
+            }
+            val videoUri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, videoValues)
+            if (videoUri != null) {
+                resolver.openOutputStream(videoUri)?.use { out ->
+                    videoFile.inputStream().use { it.copyTo(out) }
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    resolver.update(videoUri, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null)
+                }
+                videoOk = true
             }
         }
-        val videoUri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, videoValues)
-        if (videoUri == null) return false
-        resolver.openOutputStream(videoUri)?.use { out ->
-            videoFile.inputStream().use { it.copyTo(out) }
-        }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val done = ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
-            resolver.update(videoUri, done, null, null)
-        }
 
-        // 分析数据
+        // ---------- 分析报告（即使视频失败也尝试保存） ----------
         val dataValues = ContentValues().apply {
             put(MediaStore.MediaColumns.DISPLAY_NAME, "BadmintonSpeed_${stamp}.txt")
             put(MediaStore.MediaColumns.MIME_TYPE, "text/plain")
@@ -667,24 +678,28 @@ private fun saveToPublic(context: android.content.Context, result: AnalysisResul
             }
         }
         val dataUri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, dataValues)
-        if (dataUri == null) return false
-        resolver.openOutputStream(dataUri)?.use { out ->
-            out.write(buildReport(result).toByteArray())
+        if (dataUri != null) {
+            resolver.openOutputStream(dataUri)?.use { it.write(buildReport(result).toByteArray()) }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                resolver.update(dataUri, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null)
+            }
+            reportOk = true
         }
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val done = ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
-            resolver.update(dataUri, done, null, null)
+        return when {
+            videoOk && reportOk -> "已保存视频+报告到 下载/BadmintonSpeed/"
+            !videoOk && reportOk -> "原始视频已被清理，仅保存了分析报告到 下载/BadmintonSpeed/"
+            videoOk && !reportOk -> "视频已保存，报告保存失败"
+            else -> "导出失败：请检查存储空间或存储权限"
         }
-        true
     } catch (e: Exception) {
-        false
+        return "导出失败：${e.message ?: "未知错误"}"
     }
 }
 
 private fun buildReport(result: AnalysisResult): String {
     val sb = StringBuilder()
     sb.appendLine("杀球测速 BadmintonSpeed 分析报告")
-    sb.appendLine("版本：2.25")
+    sb.appendLine("版本：2.40")
     sb.appendLine("最高球速：${"%.1f".format(result.summary.maxSpeedKmh)} km/h")
     sb.appendLine("平均球速：${"%.1f".format(result.summary.avgSpeedKmh)} km/h")
     sb.appendLine("击球次数：${result.summary.totalHits}（其中杀球 ${result.summary.smashCount} 次）")

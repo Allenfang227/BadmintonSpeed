@@ -45,7 +45,7 @@ fun Court3DView(
     modifier: Modifier
 ) {
     var yaw by remember { mutableStateOf(0f) }
-    var pitch by remember { mutableStateOf(0.55f) }
+    var pitch by remember { mutableStateOf(0.5f) }
     var size by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
 
     Canvas(
@@ -55,7 +55,7 @@ fun Court3DView(
                 detectDragGestures { change, dragAmount ->
                     change.consume()
                     yaw = (yaw + dragAmount.x * 0.008f) % (2f * PI.toFloat())
-                    pitch = (pitch + dragAmount.y * 0.006f).coerceIn(0.25f, 1.15f)
+                    pitch = (pitch + dragAmount.y * 0.006f).coerceIn(0.22f, 1.15f)
                 }
             }
     ) {
@@ -63,13 +63,19 @@ fun Court3DView(
         val w = size.width.toFloat()
         val h = size.height.toFloat()
         val cx = w / 2f
-        val cy = h / 2f + h * 0.06f
+        val cy = h / 2f
 
         // 世界坐标：双打场地 6.10m x 13.40m，y 近端=0、远端=13.4；z 向上
         val W = 6.10f
         val L = 13.40f
         val cosY = cos(yaw); val sinY = sin(yaw)
         val cosP = cos(pitch); val sinP = sin(pitch)
+
+        // v2.40 自适应缩放：让场地长边（俯仰投影后）适配屏幕高度、短边适配宽度，
+        // 取较小者保证整块场地（含网高）完整可见，不再用固定 min(w,h)*0.5 导致全屏错乱。
+        val fitH = h * 0.82f / (L * cosP + 1.2f)   // 纵向（含网高余量）
+        val fitW = w * 0.92f / W                   // 横向
+        val baseScale = min(fitH, fitW)
 
         fun project(x: Float, y: Float, z: Float): Offset {
             val dx = x - W / 2f
@@ -78,9 +84,8 @@ fun Court3DView(
             val ry = dx * sinY + dy * cosY
             val sy = ry * cosP - z * sinP
             val depth = ry * sinP + z * cosP
-            val persp = 1f / (1f + depth / 40f)
-            val zoom = min(w, h) * 0.9f
-            return Offset(cx + rx * persp * zoom / 1.8f, cy + sy * persp * zoom / 1.8f)
+            val persp = 1f / (1f + depth / 45f)
+            return Offset(cx + rx * persp * baseScale, cy + sy * persp * baseScale)
         }
 
         // ---- v2.35 球场地面填充（半透明深色，让场地有体积感而非空框） ----

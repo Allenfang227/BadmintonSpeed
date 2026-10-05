@@ -204,6 +204,60 @@ object CourtModelRepo {
         } catch (e: Exception) { null }
     }
 
+    /**
+     * v2.40 导入以前训练好的模型（更新版本后模型丢失时一键恢复）：
+     * - .zip：按 exportZip 的结构解压回 rootDir（labels/ball_samples/ball_model 全部恢复，叠加不覆盖同名新文件之外的内容）
+     * - .onnx：直接复制为 ball_model/shuttle_user.onnx
+     * 返回人类可读结果说明。
+     */
+    fun importFromUri(context: Context, uri: Uri): String {
+        return try {
+            val resolver = context.contentResolver
+            val name = resolver.query(uri, null, null, null, null)?.use { c ->
+                if (c.moveToFirst()) c.getString(c.getColumnIndexOrThrow(android.provider.OpenableColumns.DISPLAY_NAME)) else null
+            } ?: "import"
+            val lower = name.lowercase()
+            when {
+                lower.endsWith(".onnx") -> {
+                    val d = modelDir(context).apply { mkdirs() }
+                    val dst = File(d, "shuttle_user.onnx")
+                    resolver.openInputStream(uri)?.use { it.copyTo(dst.outputStream()) }
+                        ?: return "导入失败：无法读取文件"
+                    exportToPublic(context, "ball_model")
+                    "已导入 ONNX 模型：shuttle_user.onnx（${dst.length() / 1024} KB），实测自动调用"
+                }
+                lower.endsWith(".zip") -> {
+                    var files = 0
+                    val root = rootDir(context)
+                    java.util.zip.ZipInputStream(resolver.openInputStream(uri)).use { zis ->
+                        var entry = zis.nextEntry
+                        while (entry != null) {
+                            if (!entry.isDirectory) {
+                                // 安全校验：禁止路径穿越
+                                val safe = entry.name.replace("\\", "/").let {
+                                    if (it.startsWith("$ROOT_NAME/")) it.substring(ROOT_NAME.length + 1) else it
+                                }
+                                if (safe.contains("..") || safe.startsWith("/")) { entry = zis.nextEntry; continue }
+                                val out = File(root, safe)
+                                out.parentFile?.mkdirs()
+                                zis.copyTo(out.outputStream())
+                                files++
+                            }
+                            zis.closeEntry()
+                            entry = zis.nextEntry
+                        }
+                    }
+                    // 导入后同步公共目录，确保卸载/更新不丢
+                    exportToPublic(context, null)
+                    "已从 zip 恢复 $files 个模型文件（样本+模板+ONNX），已同步公共目录"
+                }
+                else -> "不支持的文件：请选择 .zip 模型包或 .onnx 模型文件"
+            }
+        } catch (e: Exception) {
+            "导入失败：${e.message}"
+        }
+    }
+
     // ================= v2.21 持久化与共享 =================
 
     data class SyncResult(
