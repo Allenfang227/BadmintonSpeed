@@ -64,9 +64,11 @@ import com.badmintonspeed.app.ui.theme.OnSurfaceVariant
 import com.badmintonspeed.app.ui.theme.Primary
 import com.badmintonspeed.app.ui.theme.Surface
 import com.badmintonspeed.app.ui.theme.TrailYellow
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -85,10 +87,13 @@ import kotlin.math.sin
 fun ResultScreen(vm: MainViewModel) {
     val result = vm.result.collectAsState().value ?: return
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
 
     var progressMs by remember { mutableLongStateOf(0L) }
     var playing by remember { mutableStateOf(true) }
     var showTrail by remember { mutableStateOf(true) }
+    // v2.32：3D 全屏模式（点右上角 3D 小窗进入完整球场+球网+球飞行动画）
+    var showFull3D by remember { mutableStateOf(false) }
     // 当前选中球（用户要求：每个球的速度都会变，右上角按球切换）
     val hits = result.hits
     val defaultHitIdx = (hits.indices.maxByOrNull { hits[it].maxSpeedKmh } ?: 0).coerceAtLeast(0)
@@ -135,6 +140,15 @@ fun ResultScreen(vm: MainViewModel) {
     fun stepFrame(delta: Long) {
         val p = progressMs + delta
         seekTo(p)
+    }
+
+    // v2.32 修复：PREV/NEXT SHOT 切换选中球时，真正跳转到该球的击球帧
+    // （此前只改索引不 seek，按钮"点了没反应"）
+    LaunchedEffect(currentHitIndex) {
+        if (currentHitIndex in hits.indices && hits.isNotEmpty()) {
+            val hit = hits[currentHitIndex]
+            seekTo((hit.timeSeconds * 1000).toLong())
+        }
     }
 
     fun togglePlay() {
@@ -289,7 +303,7 @@ fun ResultScreen(vm: MainViewModel) {
                 }
             }
 
-            // 右上角 3D 可拖拽实时模拟回放（图6-9 右上角）
+            // 右上角 3D 可拖拽实时模拟回放（v2.32：点击进入全屏）
             Surface(
                 shape = RoundedCornerShape(14.dp),
                 color = Color(0xCC0A1410),
@@ -297,6 +311,7 @@ fun ResultScreen(vm: MainViewModel) {
                     .align(Alignment.TopEnd)
                     .padding(top = 78.dp, end = 16.dp)
                     .size(200.dp)
+                    .clickable { showFull3D = true }
             ) {
                 Court3DView(
                     result = result,
@@ -382,7 +397,56 @@ fun ResultScreen(vm: MainViewModel) {
                 ControlButton("NEXT SHOT", highlight = false) {
                     if (hits.isNotEmpty()) currentHitIndex = (currentHitIndex + 1) % hits.size
                 }
-                ControlButton("DOWNLOAD") { downloadResult(context, result) }
+                ControlButton("DOWNLOAD") {
+                    // v2.32 修复：下载改后台线程（此前主线程复制百 MB 视频会 ANR/失败）
+                    scope.launch {
+                        Toast.makeText(context, "正在保存到 下载/BadmintonSpeed/…", Toast.LENGTH_SHORT).show()
+                        val ok = withContext(Dispatchers.IO) { saveToPublic(context, result) }
+                        Toast.makeText(
+                            context,
+                            if (ok) "已保存到 下载/BadmintonSpeed/" else "导出失败：请检查存储空间",
+                            Toast.LENGTH_LONG
+                        ).show()
+                    }
+                }
+            }
+        }
+
+        // ---- v2.32 全屏 3D：完整羽毛球场 + 球网 + 球飞行动画 + 骨骼（点右上角 3D 小窗进入） ----
+        if (showFull3D) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(Color(0xF20A1410))
+                    .clickable(indication = null, interactionSource = remember { MutableInteractionSource() }) { }
+            ) {
+                Court3DView(
+                    result = result,
+                    currentHit = if (currentHitIndex in hits.indices) hits[currentHitIndex] else null,
+                    hitIndex = currentHitIndex.coerceAtLeast(0),
+                    hitCount = hits.size,
+                    progressMs = progressMs,
+                    poseFrames = result.poseFrames,
+                    modifier = Modifier.fillMaxSize().padding(20.dp)
+                )
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = Color(0xAA15241D),
+                    modifier = Modifier
+                        .align(Alignment.TopStart)
+                        .padding(16.dp)
+                        .clickable { showFull3D = false }
+                ) {
+                    Text("← 返回", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp))
+                }
+                Text(
+                    "360° 拖动旋转 · 完整球场 + 球网 + 球飞行",
+                    color = Color(0xCCFFFFFF),
+                    fontSize = 13.sp,
+                    fontWeight = FontWeight.Medium,
+                    modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 24.dp)
+                )
             }
         }
     }
@@ -489,14 +553,11 @@ private fun TrajectoryOverlay(result: AnalysisResult, progressMs: Long, modifier
     }
 }
 
-/** 导出视频 + 分析数据到公共 Downloads（图6-9 DOWNLOAD） */
-private fun downloadResult(context: android.content.Context, result: AnalysisResult) {
-    try {
+/** 导出视频 + 分析数据到公共 Downloads（后台线程调用，返回是否成功） */
+private fun saveToPublic(context: android.content.Context, result: AnalysisResult): Boolean {
+    return try {
         val videoFile = File(result.videoInfo.path)
-        if (!videoFile.exists()) {
-            Toast.makeText(context, "视频文件不存在", Toast.LENGTH_SHORT).show()
-            return
-        }
+        if (!videoFile.exists()) return false
         val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
         val resolver = context.contentResolver
 
@@ -506,13 +567,17 @@ private fun downloadResult(context: android.content.Context, result: AnalysisRes
             put(MediaStore.MediaColumns.MIME_TYPE, "video/mp4")
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/BadmintonSpeed")
+                put(MediaStore.MediaColumns.IS_PENDING, 1)
             }
         }
         val videoUri = resolver.insert(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, videoValues)
-        if (videoUri != null) {
-            resolver.openOutputStream(videoUri)?.use { out ->
-                videoFile.inputStream().use { it.copyTo(out) }
-            }
+        if (videoUri == null) return false
+        resolver.openOutputStream(videoUri)?.use { out ->
+            videoFile.inputStream().use { it.copyTo(out) }
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val done = ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
+            resolver.update(videoUri, done, null, null)
         }
 
         // 分析数据
@@ -521,18 +586,21 @@ private fun downloadResult(context: android.content.Context, result: AnalysisRes
             put(MediaStore.MediaColumns.MIME_TYPE, "text/plain")
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_DOWNLOADS + "/BadmintonSpeed")
+                put(MediaStore.MediaColumns.IS_PENDING, 1)
             }
         }
         val dataUri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, dataValues)
-        if (dataUri != null) {
-            resolver.openOutputStream(dataUri)?.use { out ->
-                out.write(buildReport(result).toByteArray())
-            }
+        if (dataUri == null) return false
+        resolver.openOutputStream(dataUri)?.use { out ->
+            out.write(buildReport(result).toByteArray())
         }
-
-        Toast.makeText(context, "已保存到 下载/BadmintonSpeed/", Toast.LENGTH_LONG).show()
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val done = ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }
+            resolver.update(dataUri, done, null, null)
+        }
+        true
     } catch (e: Exception) {
-        Toast.makeText(context, "导出失败：${e.message}", Toast.LENGTH_SHORT).show()
+        false
     }
 }
 

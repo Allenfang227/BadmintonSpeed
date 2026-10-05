@@ -211,8 +211,7 @@ class VideoFrameExtractor {
                             if (frameCount < maxFrames &&
                                 ptsUs >= nextSampleUs &&
                                 (ptsUs / 1000) <= analyzedDurationMs
-                            ) {
-                                val img = imageReader.acquireLatestImage()
+                            ) {                                val img = imageReader.acquireLatestImage()
                                 if (img != null) {
                                     val bmp = imageToBitmap(img)
                                     if (bmp != null) {
@@ -237,6 +236,12 @@ class VideoFrameExtractor {
                                 }
                                 // 下一采样点
                                 nextSampleUs = ptsUs + stepUs
+                            } else {
+                                // v2.32 非采样帧也按已解码时间滚动进度：MediaCodec 必须逐帧解码，
+                                // 若只在采样点上报，长视频阶段1进度条会长时间"卡住不动"，用户误以为死机。
+                                val est = ((ptsUs / 1000) * sampleCountTotal / analyzedDurationMs.coerceAtLeast(1))
+                                    .toInt().coerceIn(frameCount, sampleCountTotal)
+                                if (est > frameCount) onProgress(est, sampleCountTotal)
                             }
                             lastPtsUs = ptsUs
                             codec.releaseOutputBuffer(outIdx, false)

@@ -307,9 +307,15 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** v2.16：手动标定确认后，把 4 角映射成 12 个场地交点，导出成训练 json。
-     *  每次人工标注自动进入本地训练集（labels/ 目录），供 train_keypoints.py 增量训练。 */
+     *  每次人工标注自动进入本地训练集（labels/ 目录），供 train_keypoints.py 增量训练。
+     *  v2.32：补上 CourtLearner.save —— 把 4 角持久化到公共 court_calib/latest.json，
+     *  下次同机位上传视频自动复用，不再每次重标（此前漏存，导致"标了跟没标一样"）。 */
     fun submitManualCourtCorners(corners: List<PointF>) {
         exportCourtLabel(corners)
+        val bmp = _calibrationFrame.value
+        if (bmp != null) {
+            runCatching { CourtLearner(context).save(corners, bmp.width, bmp.height) }
+        }
         _calibrationFrame.value = null
         _screen.value = Screen.Analyzing
         startAnalysis(manualCourtCorners = corners)
