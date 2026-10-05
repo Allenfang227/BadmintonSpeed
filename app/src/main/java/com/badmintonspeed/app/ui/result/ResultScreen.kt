@@ -190,17 +190,30 @@ fun ResultScreen(vm: MainViewModel) {
     Box(Modifier.fillMaxSize().background(Color(0xFF08100C))) {
         // ---- 中央视频区（带流光轨迹） ----
         Box(Modifier.fillMaxSize().padding(bottom = 96.dp)) {
-            // 视频画面
+            // 视频画面（v2.35：FIT_CENTER 变换矩阵，与叠加层缩放模式一致，修复球标注偏位）
             AndroidView(
                 factory = { ctx ->
                     TextureView(ctx).apply {
+                        val videoW = result.frameWidth.toFloat()
+                        val videoH = result.frameHeight.toFloat()
+                        fun applyFitCenter(viewW: Int, viewH: Int) {
+                            if (viewW <= 0 || viewH <= 0 || videoW <= 0f || videoH <= 0f) return
+                            val scale = min(viewW / videoW, viewH / videoH)
+                            val dx = (viewW - videoW * scale) / 2f
+                            val dy = (viewH - videoH * scale) / 2f
+                            val m = android.graphics.Matrix()
+                            m.setScale(scale, scale)
+                            m.postTranslate(dx, dy)
+                            setTransform(m)
+                        }
                         surfaceTextureListener = object : android.view.TextureView.SurfaceTextureListener {
                             override fun onSurfaceTextureAvailable(surface: android.graphics.SurfaceTexture, width: Int, height: Int) {
+                                applyFitCenter(width, height)
                                 runCatching {
                                     mediaPlayer.setSurface(android.view.Surface(surface))
                                 }
                             }
-                            override fun onSurfaceTextureSizeChanged(s: android.graphics.SurfaceTexture, w: Int, h: Int) {}
+                            override fun onSurfaceTextureSizeChanged(s: android.graphics.SurfaceTexture, w: Int, h: Int) { applyFitCenter(w, h) }
                             override fun onSurfaceTextureDestroyed(s: android.graphics.SurfaceTexture) = true
                             override fun onSurfaceTextureUpdated(s: android.graphics.SurfaceTexture) {}
                         }

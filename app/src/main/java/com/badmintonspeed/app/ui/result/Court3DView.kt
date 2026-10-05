@@ -83,6 +83,20 @@ fun Court3DView(
             return Offset(cx + rx * persp * zoom / 1.8f, cy + sy * persp * zoom / 1.8f)
         }
 
+        // ---- v2.35 球场地面填充（半透明深色，让场地有体积感而非空框） ----
+        val groundPath = androidx.compose.ui.graphics.Path().apply {
+            val p0 = project(0f, 0f, 0f)
+            val p1 = project(W, 0f, 0f)
+            val p2 = project(W, L, 0f)
+            val p3 = project(0f, L, 0f)
+            moveTo(p0.x, p0.y)
+            lineTo(p1.x, p1.y)
+            lineTo(p2.x, p2.y)
+            lineTo(p3.x, p3.y)
+            close()
+        }
+        drawPath(groundPath, Color(0x223B82F6))  // 半透明深蓝（模拟蓝色场地）
+
         // ---- 完整场地绘制（标准羽毛球场所有线） ----
         val lineColor = Color(0xAAFFFFFF)
         val s2 = 1.5f
@@ -180,30 +194,32 @@ fun Court3DView(
         currentHit?.let { hit ->
             val traj = hit.trajectory
             if (traj.size >= 2) {
-                // 飞行轨迹（黄色光带）：近端→远端 z 抛物线模拟
-                val t0 = traj.first().timeSec
-                val t1 = traj.last().timeSec
-                val span = (t1 - t0).coerceAtLeast(0.001)
+                // v2.35 飞行轨迹（渐变光带：起点暗→当前点亮，模拟球拖尾）
                 for (i in 1 until traj.size) {
                     val a = traj[i - 1]
                     val b = traj[i]
-                    // v2.12 景深：直接使用轨迹填充的真实高度 zMeters（抛物线模型，击球→最高→落地）
+                    val frac = i.toFloat() / traj.size
                     drawLine(
-                        color = Color(0xFFFFD60A).copy(alpha = 0.85f),
+                        color = Color(0xFFFFD60A).copy(alpha = 0.25f + 0.65f * frac),
                         start = project(a.courtX, a.courtY, a.zMeters),
                         end = project(b.courtX, b.courtY, b.zMeters),
-                        strokeWidth = 3f,
+                        strokeWidth = 2f + 4f * frac,
                         cap = StrokeCap.Round
                     )
                 }
-                // 当前播放进度对应的球位
+                // 当前播放进度对应的球位（v2.35：地面阴影 + 三层发光 + 核心白球）
                 val tNow = progressMs / 1000.0
                 val visible = traj.filter { it.timeSec <= tNow + 0.03 }
                 visible.lastOrNull()?.let { cur ->
+                    // 地面阴影（球正下方 z=0）
+                    val shadowP = project(cur.courtX, cur.courtY, 0f)
+                    drawCircle(Color(0x55000000), radius = 7f, center = shadowP)
+                    // 三层发光
                     val p = project(cur.courtX, cur.courtY, cur.zMeters)
-                    drawCircle(Color(0x33FFD60A), radius = 16f, center = p)
-                    drawCircle(Color(0x66FFD60A), radius = 9f, center = p)
-                    drawCircle(TrailYellow, radius = 5f, center = p)
+                    drawCircle(Color(0x22FFD60A), radius = 22f, center = p)
+                    drawCircle(Color(0x55FFD60A), radius = 13f, center = p)
+                    drawCircle(Color(0xAAFFFFFF), radius = 7f, center = p)
+                    drawCircle(TrailYellow, radius = 4f, center = p)
                 }
             }
 

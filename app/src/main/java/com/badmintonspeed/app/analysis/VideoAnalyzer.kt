@@ -212,7 +212,7 @@ class VideoAnalyzer {
             val extracted = extractor.extract(
                 file = videoFile,
                 analysisFps = analysisFps,
-                maxDimension = 1280,
+                maxDimension = 800,
                 onProgress = { done, total ->
                     onStage(
                         StageUpdate(
@@ -813,7 +813,7 @@ class VideoAnalyzer {
             hits = hits,
             summary = summary,
             analysisDurationMs = System.currentTimeMillis() - startTime,
-            appVersion = "2.34.0",
+            appVersion = "2.35.0",
             frameWidth = w,
             frameHeight = h,
             frameAtMaxSpeed = frameAtMax,

@@ -54,7 +54,7 @@ fun AboutScreen(vm: MainViewModel) {
             modifier = Modifier.fillMaxWidth().padding(horizontal = 60.dp)
         )
         Spacer(Modifier.height(8.dp))
-        Text("VERSION 2.34", color = OnSurfaceVariant, fontSize = 12.sp, fontWeight = FontWeight.Medium)
+        Text("VERSION 2.35", color = OnSurfaceVariant, fontSize = 12.sp, fontWeight = FontWeight.Medium)
         // v2.32 算力状态：超线程多核 + NPU（用户强调麒麟9000S 是手机界首个支持超线程的 SoC）
         Text(
             "算力加速：CPU ×${OrtSessions.intraThreads} 线程（SMT 超线程感知） + " +
