@@ -42,10 +42,12 @@ fun Court3DView(
     hitCount: Int,
     progressMs: Long,
     poseFrames: List<PoseFrameData> = emptyList(),
+    // v2.43：视角状态提升到结果页，小窗与全屏共享——点进全屏保持当前视角，不重置、不"换视角"
+    yaw: Float,
+    pitch: Float,
+    onViewChange: (newYaw: Float, newPitch: Float) -> Unit,
     modifier: Modifier
 ) {
-    var yaw by remember { mutableStateOf(0f) }
-    var pitch by remember { mutableStateOf(0.5f) }
     var size by remember { mutableStateOf(androidx.compose.ui.unit.IntSize.Zero) }
 
     Canvas(
@@ -54,8 +56,9 @@ fun Court3DView(
             .pointerInput(Unit) {
                 detectDragGestures { change, dragAmount ->
                     change.consume()
-                    yaw = (yaw + dragAmount.x * 0.008f) % (2f * PI.toFloat())
-                    pitch = (pitch + dragAmount.y * 0.006f).coerceIn(0.22f, 1.15f)
+                    val ny = (yaw + dragAmount.x * 0.008f) % (2f * PI.toFloat())
+                    val np = (pitch + dragAmount.y * 0.006f).coerceIn(0.22f, 1.15f)
+                    onViewChange(ny, np)
                 }
             }
     ) {

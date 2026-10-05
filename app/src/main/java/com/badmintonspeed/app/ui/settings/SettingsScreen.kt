@@ -4,6 +4,7 @@ import android.graphics.Bitmap
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -40,8 +41,11 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import com.badmintonspeed.app.analysis.VideoFrameExtractor
 import com.badmintonspeed.app.ui.MainViewModel
+import com.badmintonspeed.app.domain.PerformanceMode
 import com.badmintonspeed.app.ui.theme.OnSurfaceVariant
 import com.badmintonspeed.app.ui.theme.Primary
 import com.badmintonspeed.app.ui.theme.Surface
@@ -158,8 +162,43 @@ fun SettingsScreen(vm: MainViewModel) {
             Modifier
                 .width(340.dp)
                 .fillMaxHeight()
+                .verticalScroll(rememberScrollState())
                 .padding(start = 8.dp, end = 24.dp, top = 24.dp, bottom = 24.dp)
         ) {
+            // v2.43 性能模式模块：三档位（真实决定抽帧密度：省电5fps / 均衡10 / 极速15）
+            Text("性能模式", color = Color.White, fontSize = 16.sp, fontWeight = FontWeight.Medium)
+            Spacer(Modifier.height(10.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                PerformanceMode.values().forEach { mode ->
+                    val selected = s.performanceMode == mode
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (selected) Primary else Color(0xFF16211B),
+                        modifier = Modifier
+                            .weight(1f)
+                            .clickable { vm.setPerformanceMode(mode) }
+                    ) {
+                        Column(
+                            Modifier.padding(vertical = 10.dp).fillMaxWidth(),
+                            horizontalAlignment = Alignment.CenterHorizontally
+                        ) {
+                            Text(
+                                mode.displayName.dropLast(2),
+                                color = if (selected) Color(0xFF06120A) else Color.White,
+                                fontSize = 13.sp,
+                                fontWeight = FontWeight.SemiBold
+                            )
+                            Text(
+                                "${mode.analysisFps}fps",
+                                color = if (selected) Color(0xFF0B2A18) else OnSurfaceVariant,
+                                fontSize = 11.sp
+                            )
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.height(24.dp))
+
             // 显示虚拟场地
             Row(
                 Modifier.fillMaxWidth(),
@@ -241,15 +280,17 @@ private fun SettingSwitchRow(label: String, checked: Boolean, onCheckedChange: (
     }
 }
 
-/** 透视球场示意（3D 场地）：双打场地 6.10m x 13.40m。v2.25：支持横向拖动 360° 旋转 */
+/** 透视球场示意（3D 场地）：双打场地 6.10m x 13.40m。v2.43：横向拖动绕竖轴旋转 + 纵向拖动改变俯仰角 */
 @Composable
 private fun CourtPreview(modifier: Modifier) {
-    // v2.25 场地可拖动：横向拖动绕竖轴旋转（伪 3D 透视，cos 压缩 x）
+    // 场地可拖动：横向拖动绕竖轴旋转(yaw)，纵向拖动改变俯仰(pitch)
     var yawDeg by remember { mutableStateOf(0f) }
+    var pitchDeg by remember { mutableStateOf(20f) }
     Canvas(modifier.pointerInput(Unit) {
         detectDragGestures { change, dragAmount ->
             change.consume()
             yawDeg = (yawDeg + dragAmount.x * 0.45f) % 360f
+            pitchDeg = (pitchDeg - dragAmount.y * 0.35f).coerceIn(2f, 75f)
         }
     }) {
         val w = size.width
@@ -261,11 +302,13 @@ private fun CourtPreview(modifier: Modifier) {
         // yaw 引起的横向压缩：0° 正面，±90° 侧面
         val yawRad = Math.toRadians(yawDeg.toDouble())
         val cosYaw = kotlin.math.cos(yawRad).toFloat().coerceIn(0.18f, 1f)
+        // pitch 俯仰：俯仰越大（越俯视），纵向近大远小越强
+        val pitchFactor = (pitchDeg / 75f).coerceIn(0.05f, 1f)
 
         fun proj(xFrac: Float, yFrac: Float): Offset {
-            // 简单透视：x 线性，y 近大远小；横向乘 cos(yaw) 模拟绕竖轴旋转
+            // 透视：x 线性，y 近大远小；横向乘 cos(yaw) 模拟绕竖轴旋转
             val y = courtTop + (courtBottom - courtTop) * yFrac
-            val scaleY = 0.65f + 0.35f * yFrac
+            val scaleY = (1f - 0.45f * pitchFactor) + 0.45f * pitchFactor * yFrac + 0.1f
             val x = cx + (xFrac - 0.5f) * courtW * scaleY * cosYaw
             return Offset(x, y)
         }

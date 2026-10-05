@@ -80,7 +80,7 @@ fun AppRoot(vm: MainViewModel = viewModel()) {
     BackHandler(enabled = true) {
         when (screen) {
             is Screen.Analyzing -> showAnalyzeMenu = true
-            is Screen.Result -> vm.goTo(Screen.Home)
+            is Screen.Result -> vm.exitResult()
             is Screen.RecordDetail -> vm.goTo(Screen.History)
             else -> if (screen is Screen.Home) {
                 // 已退出确认逻辑：双击返回退出

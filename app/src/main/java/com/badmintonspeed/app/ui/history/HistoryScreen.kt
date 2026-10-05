@@ -118,7 +118,7 @@ fun HistoryScreen(vm: MainViewModel, records: List<AnalysisRecord>) {
                     HistoryCard(
                         record = r,
                         timeText = timeFmt.format(Date(r.createdAt)),
-                        onClick = { vm.goTo(Screen.RecordDetail(r)) }
+                        onClick = { vm.replayRecord(r) }
                     )
                 }
             }

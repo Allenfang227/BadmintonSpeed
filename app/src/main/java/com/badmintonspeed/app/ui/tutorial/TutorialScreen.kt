@@ -6,7 +6,9 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -19,10 +21,15 @@ import com.badmintonspeed.app.ui.theme.OnSurfaceVariant
 import com.badmintonspeed.app.ui.theme.Primary
 import com.badmintonspeed.app.ui.theme.Surface
 
-/** 使用教程页：三步使用流程 */
+/** 使用教程页：三步使用流程（v2.43：内容可纵向滚动，适配小屏） */
 @Composable
 fun TutorialScreen() {
-    Column(Modifier.fillMaxSize().padding(horizontal = 44.dp, vertical = 32.dp)) {
+    Column(
+        Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 44.dp, vertical = 32.dp)
+    ) {
         Text("使用教程", color = Color.White, fontSize = 30.sp, fontWeight = FontWeight.Bold)
         Spacer(Modifier.height(6.dp))
         Text("How to Use", color = OnSurfaceVariant, fontSize = 14.sp)

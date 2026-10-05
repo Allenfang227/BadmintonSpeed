@@ -38,17 +38,25 @@ class TrackNetV3Detector(context: Context) {
 
     data class Hit(val frameIndex: Int, val x: Float, val y: Float, val conf: Float)
 
+    private val appContext: Context = context.applicationContext
     private val env: OrtEnvironment = OrtEnvironment.getEnvironment()
-    private val session: OrtSession
-
-    init {
-        val cache = File(context.filesDir, "tracknetv3.onnx")
+    private val modelFile: File = File(appContext.filesDir, "tracknetv3.onnx").also { cache ->
         if (!cache.exists()) {
             cache.outputStream().use { out ->
-                context.assets.open(MODEL_ASSET).use { it.copyTo(out) }
+                appContext.assets.open(MODEL_ASSET).use { it.copyTo(out) }
             }
         }
-        session = env.createSession(cache.absolutePath, OrtSessions.options())
+    }
+    private var builtEpoch: Int = OrtSessions.configEpoch
+    private var session: OrtSession = env.createSession(modelFile.absolutePath, OrtSessions.options())
+
+    /** v2.43：超线程开关变化时用新线程数重建会话 */
+    private fun ensureSession() {
+        if (OrtSessions.configEpoch != builtEpoch) {
+            runCatching { session.close() }
+            session = env.createSession(modelFile.absolutePath, OrtSessions.options())
+            builtEpoch = OrtSessions.configEpoch
+        }
     }
 
     private val plane = MH * MW
@@ -95,6 +103,7 @@ class TrackNetV3Detector(context: Context) {
         frames: List<VideoFrameExtractor.AnalyzedFrame>,
         onProgress: ((windowsDone: Int, windowsTotal: Int) -> Unit)? = null
     ): Map<Int, Hit> {
+        ensureSession()
         val n = frames.size
         if (n < SEQ) return emptyMap()
 

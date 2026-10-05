@@ -27,7 +27,23 @@ object OrtSessions {
     @Volatile
     var smtEnabled: Boolean = true
 
-    /** 推理算子内部并行线程数：受超线程开关控制，运行时实时生效 */
+    /**
+     * v2.43 配置版本号：ONNX 会话的线程数在【创建时】固定，运行时改 intraThreads 不会影响已建会话。
+     * 切换超线程开关时自增 epoch；各检测器推理前比对，发现变化就用新配置【重建会话】——开关因此真实生效。
+     */
+    @Volatile
+    private var _configEpoch: Int = 0
+    val configEpoch: Int get() = _configEpoch
+
+    /** 切换超线程开关：配置变化时自增 epoch，通知各检测器重建会话（方法名避开属性 setter 的 JVM 签名） */
+    fun configureSmt(enabled: Boolean) {
+        if (smtEnabled != enabled) {
+            smtEnabled = enabled
+            _configEpoch++
+        }
+    }
+
+    /** 推理算子内部并行线程数：受超线程开关控制 */
     val intraThreads: Int
         get() {
             val logical = Runtime.getRuntime().availableProcessors().coerceAtLeast(2)

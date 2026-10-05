@@ -96,8 +96,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     private val _smtEnabled = MutableStateFlow(OrtSessions.smtEnabled)
     val smtEnabled: StateFlow<Boolean> = _smtEnabled
     fun toggleSmt() {
-        _smtEnabled.value = !_smtEnabled.value
-        OrtSessions.smtEnabled = _smtEnabled.value
+        val next = !_smtEnabled.value
+        OrtSessions.configureSmt(next)   // v2.43：配置变化自增 epoch，各检测器下次推理重建会话（真实生效）
+        _smtEnabled.value = OrtSessions.smtEnabled
     }
 
     private fun startPerfMonitor() {
@@ -131,6 +132,9 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
     // 结果与错误（错误带错误码，对应不同失败原因）
     private val _result = MutableStateFlow<AnalysisResult?>(null)
     val result: StateFlow<AnalysisResult?> = _result
+    // v2.43 历史回放标记：true 时结果页返回应回历史页（而非首页）
+    private val _replayFromHistory = MutableStateFlow(false)
+    val replayFromHistory: StateFlow<Boolean> = _replayFromHistory
     private val _error = MutableStateFlow<AnalysisError?>(null)
     val error: StateFlow<AnalysisError?> = _error
 
@@ -270,7 +274,7 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
                         maxSpeedKmh = result.summary.maxSpeedKmh,
                         totalHits = result.summary.totalHits,
                         smashCount = result.summary.smashCount,
-                        resultJson = ResultJson.encode(result)
+                        resultJson = ResultJson.encodeFull(result, file.absolutePath)
                     )
                     historyRepo.save(record)
                     loadHistory()
@@ -324,6 +328,43 @@ class MainViewModel(app: Application) : AndroidViewModel(app) {
         analyzeJob?.cancel()
         _previewFrame.value = null
         _screen.value = Screen.Home
+    }
+
+    /** v2.43 历史回放：从记录的完整 JSON 重建 AnalysisResult，复用结果页播放当时处理结果 */
+    fun replayRecord(record: AnalysisRecord) {
+        viewModelScope.launch {
+            val videoFile = File(context.filesDir, "videos/${record.videoName}")
+            val restored = withContext(Dispatchers.IO) {
+                runCatching {
+                    ResultJson.decodeFull(
+                        record.resultJson,
+                        if (videoFile.exists()) videoFile.absolutePath else null
+                    )
+                }.getOrNull()
+            }
+            if (restored == null) {
+                _error.value = AnalysisError(
+                    code = "E003",
+                    title = "无法回放",
+                    detail = "该记录为旧版本保存，数据不完整，无法播放处理结果；新版本完成的测速可完整回放。",
+                    threshold = "需完整结果数据"
+                )
+                return@launch
+            }
+            _result.value = restored
+            _replayFromHistory.value = true
+            _screen.value = Screen.Result
+        }
+    }
+
+    /** v2.43 结果页退出：回放来源回历史页，正常测速回首页 */
+    fun exitResult() {
+        if (_replayFromHistory.value) {
+            _replayFromHistory.value = false
+            _screen.value = Screen.History
+        } else {
+            _screen.value = Screen.Home
+        }
     }
 
     /** v2.30 后台运行：不取消分析，仅回到首页（分析继续在跑），首页可"继续当前分析" */

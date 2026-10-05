@@ -97,6 +97,9 @@ fun ResultScreen(vm: MainViewModel) {
     var showTrail by remember { mutableStateOf(true) }
     // v2.32：3D 全屏模式（点右上角 3D 小窗进入完整球场+球网+球飞行动画）
     var showFull3D by remember { mutableStateOf(false) }
+    // v2.43 3D 视角（小窗与全屏共享，进全屏不重置视角）
+    var courtYaw by remember { mutableStateOf(0f) }
+    var courtPitch by remember { mutableStateOf(0.62f) }
     // 当前选中球（用户要求：每个球的速度都会变，右上角按球切换）
     val hits = result.hits
     val defaultHitIdx = (hits.indices.maxByOrNull { hits[it].maxSpeedKmh } ?: 0).coerceAtLeast(0)
@@ -147,10 +150,40 @@ fun ResultScreen(vm: MainViewModel) {
 
     // v2.32 修复：PREV/NEXT SHOT 切换选中球时，真正跳转到该球的击球帧
     // （此前只改索引不 seek，按钮"点了没反应"）
+    // v2.43：displayHitIndex 是实际显示的球（播放时自动跟随当前时刻）；currentHitIndex 是手动 PREV/NEXT 选中（会 seek）
+    var displayHitIndex by remember { mutableStateOf(currentHitIndex) }
+
+    // 手动 PREV/NEXT：seek 到该球起点，并让显示跟随
     LaunchedEffect(currentHitIndex) {
         if (currentHitIndex in hits.indices && hits.isNotEmpty()) {
+            displayHitIndex = currentHitIndex
             val hit = hits[currentHitIndex]
             seekTo((hit.timeSeconds * 1000).toLong())
+        }
+    }
+
+    // v2.43 播放时自动跟随当前时刻正在进行的球：IN/OUT、球速、3D 轨迹随落地实时更新（不 seek、不打断播放）
+    LaunchedEffect(progressMs, playing) {
+        if (playing && hits.isNotEmpty()) {
+            val tNow = progressMs / 1000.0
+            // 优先：当前时刻落在某球的飞行窗口[击球, 落地]内
+            val inWindow = hits.indices.firstOrNull { idx ->
+                val h = hits[idx]
+                val t0 = h.timeSeconds
+                val t1 = h.trajectory.lastOrNull()?.timeSec ?: t0
+                tNow in t0..t1
+            }
+            displayHitIndex = if (inWindow != null) {
+                inWindow
+            } else {
+                // 不在任何窗口：取时间上最近的球
+                hits.indices.minByOrNull { idx ->
+                    val h = hits[idx]
+                    val t0 = h.timeSeconds
+                    val t1 = h.trajectory.lastOrNull()?.timeSec ?: t0
+                    if (tNow < t0) t0 - tNow else tNow - t1
+                } ?: displayHitIndex
+            }
         }
     }
 
@@ -168,8 +201,8 @@ fun ResultScreen(vm: MainViewModel) {
     val liveSpeed: Float
     val isIn: Boolean
     val currentHit: HitAnalysis?
-    if (hits.isNotEmpty() && currentHitIndex in hits.indices) {
-        val hit = hits[currentHitIndex]
+    if (hits.isNotEmpty() && displayHitIndex in hits.indices) {
+        val hit = hits[displayHitIndex]
         currentHit = hit
         shotSpeed = hit.maxSpeedKmh
         // LIVE：当前播放进度在球轨迹中的实时速度（未到击球时刻前显示该球最大速度，过落点后显示落点速度）
@@ -264,7 +297,7 @@ fun ResultScreen(vm: MainViewModel) {
                     .align(Alignment.TopStart)
                     .padding(16.dp)
                     .size(44.dp)
-                    .clickable { vm.goTo(com.badmintonspeed.app.ui.Screen.Home) }
+                    .clickable { vm.exitResult() }
             ) {
                 Box(contentAlignment = Alignment.Center) {
                     Text("←", color = Color.White, fontSize = 24.sp, fontWeight = FontWeight.Bold)
@@ -343,11 +376,14 @@ fun ResultScreen(vm: MainViewModel) {
             ) {
                 Court3DView(
                     result = result,
-                    currentHit = if (currentHitIndex in hits.indices) hits[currentHitIndex] else null,
-                    hitIndex = currentHitIndex.coerceAtLeast(0),
+                    currentHit = if (displayHitIndex in hits.indices) hits[displayHitIndex] else null,
+                    hitIndex = displayHitIndex.coerceAtLeast(0),
                     hitCount = hits.size,
                     progressMs = progressMs,
                     poseFrames = result.poseFrames,
+                    yaw = courtYaw,
+                    pitch = courtPitch,
+                    onViewChange = { ny, np -> courtYaw = ny; courtPitch = np },
                     modifier = Modifier.fillMaxSize().padding(8.dp)
                 )
             }
@@ -410,7 +446,10 @@ fun ResultScreen(vm: MainViewModel) {
             ) {
                 ControlButton("TRAJ FX", highlight = showTrail) { showTrail = !showTrail }
                 ControlButton("PREV SHOT", highlight = false) {
-                    if (hits.isNotEmpty()) currentHitIndex = (currentHitIndex - 1 + hits.size) % hits.size
+                    if (hits.isNotEmpty()) {
+                        if (playing) togglePlay()  // 手动查看特定球：暂停自动跟随
+                        currentHitIndex = (currentHitIndex - 1 + hits.size) % hits.size
+                    }
                 }
                 // 播放/暂停（图7 中央）
                 Surface(
@@ -423,7 +462,10 @@ fun ResultScreen(vm: MainViewModel) {
                     }
                 }
                 ControlButton("NEXT SHOT", highlight = false) {
-                    if (hits.isNotEmpty()) currentHitIndex = (currentHitIndex + 1) % hits.size
+                    if (hits.isNotEmpty()) {
+                        if (playing) togglePlay()
+                        currentHitIndex = (currentHitIndex + 1) % hits.size
+                    }
                 }
                 ControlButton("DOWNLOAD") {
                     // v2.32 修复：下载改后台线程（此前主线程复制百 MB 视频会 ANR/失败）
@@ -446,11 +488,14 @@ fun ResultScreen(vm: MainViewModel) {
             ) {
                 Court3DView(
                     result = result,
-                    currentHit = if (currentHitIndex in hits.indices) hits[currentHitIndex] else null,
-                    hitIndex = currentHitIndex.coerceAtLeast(0),
+                    currentHit = if (displayHitIndex in hits.indices) hits[displayHitIndex] else null,
+                    hitIndex = displayHitIndex.coerceAtLeast(0),
                     hitCount = hits.size,
                     progressMs = progressMs,
                     poseFrames = result.poseFrames,
+                    yaw = courtYaw,
+                    pitch = courtPitch,
+                    onViewChange = { ny, np -> courtYaw = ny; courtPitch = np },
                     modifier = Modifier.fillMaxSize().padding(20.dp)
                 )
                 Surface(
@@ -699,7 +744,7 @@ private fun saveToPublic(context: android.content.Context, result: AnalysisResul
 private fun buildReport(result: AnalysisResult): String {
     val sb = StringBuilder()
     sb.appendLine("杀球测速 BadmintonSpeed 分析报告")
-    sb.appendLine("版本：2.42.2")
+    sb.appendLine("版本：2.43")
     sb.appendLine("最高球速：${"%.1f".format(result.summary.maxSpeedKmh)} km/h")
     sb.appendLine("平均球速：${"%.1f".format(result.summary.avgSpeedKmh)} km/h")
     sb.appendLine("击球次数：${result.summary.totalHits}（其中杀球 ${result.summary.smashCount} 次）")

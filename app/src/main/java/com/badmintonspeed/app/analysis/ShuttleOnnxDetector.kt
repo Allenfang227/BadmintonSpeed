@@ -34,22 +34,34 @@ class ShuttleOnnxDetector(
         val cx: Float, val cy: Float, val w: Float, val h: Float, val conf: Float
     )
 
+    private val appContext: Context = context.applicationContext
     private val env: OrtEnvironment = OrtEnvironment.getEnvironment()
-    private val session: OrtSession = loadSession(context)
-
-    private fun loadSession(context: Context): OrtSession {
-        val cacheFile = File(context.filesDir, "shuttle.onnx")
+    private val modelFile: File = File(appContext.filesDir, "shuttle.onnx").also { cacheFile ->
         if (!cacheFile.exists()) {
             cacheFile.outputStream().use { out ->
-                context.assets.open(MODEL_ASSET).use { ins -> ins.copyTo(out) }
+                appContext.assets.open(MODEL_ASSET).use { ins -> ins.copyTo(out) }
             }
         }
+    }
+    private var builtEpoch: Int = OrtSessions.configEpoch
+    private var session: OrtSession = loadSession()
+
+    private fun loadSession(): OrtSession {
         // v2.31 NPU（NNAPI）优先挂载，失败自动全局回退 CPU 多线程（防闪退）
         return runCatching {
-            env.createSession(cacheFile.absolutePath, OrtSessions.options(useNpu = true))
+            env.createSession(modelFile.absolutePath, OrtSessions.options(useNpu = true))
         }.getOrElse {
             NpuSupport.markFailed()
-            env.createSession(cacheFile.absolutePath, OrtSessions.options(useNpu = false))
+            env.createSession(modelFile.absolutePath, OrtSessions.options(useNpu = false))
+        }
+    }
+
+    /** v2.43：超线程开关变化（configEpoch 自增）时，用新线程数重建会话——开关真实生效 */
+    private fun ensureSession() {
+        if (OrtSessions.configEpoch != builtEpoch) {
+            runCatching { session.close() }
+            session = loadSession()
+            builtEpoch = OrtSessions.configEpoch
         }
     }
 
@@ -59,6 +71,7 @@ class ShuttleOnnxDetector(
      * @return 映射回原始帧像素坐标的检测框列表
      */
     fun detect(frame: Bitmap, hint: Pair<Float, Float>? = null): List<Box> {
+        ensureSession()
         val boxes = detectFull(frame)
         if (boxes.isNotEmpty() || hint == null) return boxes
 

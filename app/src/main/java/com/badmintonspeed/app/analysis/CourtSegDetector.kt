@@ -37,27 +37,40 @@ class CourtSegDetector(context: Context) {
         val coverage: Float
     )
 
+    private val appContext: Context = context.applicationContext
     private val env: OrtEnvironment = OrtEnvironment.getEnvironment()
-    private val session: OrtSession = loadSession(context)
-
-    private fun loadSession(context: Context): OrtSession {
-        val cacheFile = File(context.filesDir, "court_seg.onnx")
+    private val modelFile: File = File(appContext.filesDir, "court_seg.onnx").also { cacheFile ->
         if (!cacheFile.exists()) {
             cacheFile.outputStream().use { out ->
-                context.assets.open(MODEL_ASSET).use { ins -> ins.copyTo(out) }
+                appContext.assets.open(MODEL_ASSET).use { ins -> ins.copyTo(out) }
             }
         }
+    }
+    private var builtEpoch: Int = OrtSessions.configEpoch
+    private var session: OrtSession = loadSession()
+
+    private fun loadSession(): OrtSession {
         // v2.31 NPU（NNAPI）优先挂载，失败自动全局回退 CPU 多线程（防闪退）
         return runCatching {
-            env.createSession(cacheFile.absolutePath, OrtSessions.options(useNpu = true))
+            env.createSession(modelFile.absolutePath, OrtSessions.options(useNpu = true))
         }.getOrElse {
             NpuSupport.markFailed()
-            env.createSession(cacheFile.absolutePath, OrtSessions.options(useNpu = false))
+            env.createSession(modelFile.absolutePath, OrtSessions.options(useNpu = false))
+        }
+    }
+
+    /** v2.43：超线程开关变化时用新线程数重建会话 */
+    private fun ensureSession() {
+        if (OrtSessions.configEpoch != builtEpoch) {
+            runCatching { session.close() }
+            session = loadSession()
+            builtEpoch = OrtSessions.configEpoch
         }
     }
 
     /** 对帧做场地分割，返回原图尺寸掩码；无检出/低置信返回 null */
     fun segment(frame: Bitmap): SegMask? {
+        ensureSession()
         val srcW = frame.width
         val srcH = frame.height
         val scale = minOf(INPUT_SIZE.toFloat() / srcW, INPUT_SIZE.toFloat() / srcH)
