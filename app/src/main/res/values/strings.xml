@@ -14,11 +14,25 @@
     <!-- 测速模式页 -->
     <string name="speed_mode_title">选择测速模式</string>
     <string name="realtime_mode">实时测速</string>
-    <string name="realtime_desc">把手机对准正在打球的场地，本APP会实时计算并显示每帧球的球速并还原出3D羽毛球轨迹。</string>
+    <string name="realtime_desc">把手机对准正在打球的场地，APP 将实时检测羽毛球并显示当前球速与运动轨迹。</string>
     <string name="upload_mode">上传视频测速</string>
     <string name="upload_desc">上传录制好的打球视频，本APP会计算整个视频后，再显示每帧球速并还原出3D羽毛球轨迹。</string>
     <string name="in_dev">开发中</string>
     <string name="enter">进入</string>
+
+    <!-- 实时测速页 -->
+    <string name="realtime_start">开始测速</string>
+    <string name="realtime_close">关闭</string>
+    <string name="realtime_status_court">正在识别场地…</string>
+    <string name="realtime_status_ready">检测中</string>
+    <string name="realtime_speed_now">当前球速</string>
+    <string name="realtime_speed_max">最高球速</string>
+    <string name="realtime_hits">击球次数</string>
+    <string name="realtime_finish">结束并查看结果</string>
+    <string name="realtime_hint">将镜头对准球场，保持羽毛球在画面内</string>
+    <string name="realtime_no_court">未识别到场地，请让完整场地线进入画面</string>
+    <string name="realtime_result_title">实时测速结果</string>
+    <string name="realtime_no_data">未检测到有效击球，请对准场地后重试</string>
 
     <!-- 上传测速页 -->
     <string name="upload_title">上 传 视 频 测 速</string>

@@ -21,7 +21,7 @@ import com.badminton.speed.R;
 import com.google.android.material.button.MaterialButton;
 
 /**
- * 测速模式选择：实时测速（开发中） / 上传视频测速（可用）。
+ * 测速模式选择：实时测速（相机实时分析，v2.46 上线） / 上传视频测速（可用）。
  */
 public class SpeedModeFragment extends Fragment {
 
@@ -34,13 +34,12 @@ public class SpeedModeFragment extends Fragment {
             if (act != null) act.getDrawer().openDrawer(GravityCompat.START);
         });
 
-        // 实时测速：开发中，不可点
+        // 实时测速：进入相机实时分析页（v2.46 上线）
         v.findViewById(R.id.btn_realtime).setOnClickListener(view -> {
-            new android.app.AlertDialog.Builder(requireContext())
-                    .setTitle("提示")
-                    .setMessage("实时测速正在开发中，敬请期待。\n\n请使用「上传视频测速」体验完整功能。")
-                    .setPositiveButton("好的", null)
-                    .show();
+            requireActivity().getSupportFragmentManager().beginTransaction()
+                    .replace(R.id.main_container, new RealtimeFragment())
+                    .addToBackStack(null)
+                    .commit();
         });
 
         // 上传视频：跳转到 UploadFragment

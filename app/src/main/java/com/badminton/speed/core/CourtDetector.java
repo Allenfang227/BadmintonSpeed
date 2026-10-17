@@ -119,6 +119,12 @@ public class CourtDetector {
                 }
             }
 
+            // Step2.6: 同方向聚类合并（v2.46）
+            // 霍夫检测会把同一条真实边界裂成多条近平行线段，直接取极值单线极易被
+            // 噪声线带偏 → 先把位置相近（<=10px）的线段合并为一条代表线再取边界。
+            hLines = mergeLines(hLines, true);
+            vLines = mergeLines(vLines, false);
+
             // Step3: 取 4 条边界完整线段（真实直线，非取点）
             double[] topSeg = pickBoundary(hLines, true, true);
             double[] bottomSeg = pickBoundary(hLines, true, false);
@@ -246,6 +252,44 @@ public class CourtDetector {
     }
 
     // === 辅助 ===
+
+    /**
+     * 同方向线段聚类合并（v2.46 新增）。
+     * 按位置（横线看平均 y，竖线看平均 x）排序后，把相距 <=10px 的线段合并为一条
+     * 长度加权的代表线段。效果：同一条真实边界裂成的多条霍夫线段被并成一条，
+     * 取极值时不再被单根短线/噪声线带偏。
+     */
+    private List<double[]> mergeLines(List<double[]> lines, boolean horizontal) {
+        List<double[]> out = new ArrayList<>();
+        if (lines == null || lines.isEmpty()) return out;
+        List<double[]> sorted = new ArrayList<>(lines);
+        sorted.sort((a, b) -> Double.compare(posOf(a, horizontal), posOf(b, horizontal)));
+
+        double tol = 10.0;
+        double[] cur = null;
+        double curW = 0;
+        for (double[] d : sorted) {
+            double len = Math.hypot(d[2] - d[0], d[3] - d[1]);
+            if (len < 1e-3) continue;
+            if (cur == null || Math.abs(posOf(d, horizontal) - posOf(cur, horizontal)) > tol) {
+                if (cur != null) out.add(cur);
+                cur = new double[]{d[0], d[1], d[2], d[3]};
+                curW = len;
+            } else {
+                double w = curW + len;
+                for (int k = 0; k < 4; k++) {
+                    cur[k] = (cur[k] * curW + d[k] * len) / w;
+                }
+                curW = w;
+            }
+        }
+        if (cur != null) out.add(cur);
+        return out;
+    }
+
+    private double posOf(double[] seg, boolean horizontal) {
+        return horizontal ? (seg[1] + seg[3]) / 2.0 : (seg[0] + seg[2]) / 2.0;
+    }
 
     /** 返回完整线段 {x1,y1,x2,y2}，按极值坐标筛选（min=true 取最小坐标端）。 */
     private double[] pickBoundary(List<double[]> lines, boolean horizontal, boolean min) {

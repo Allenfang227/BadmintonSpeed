@@ -1,0 +1,152 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/bg_dark">
+
+    <!-- 相机预览 -->
+    <androidx.camera.view.PreviewView
+        android:id="@+id/preview_view"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        app:scaleType="fitCenter" />
+
+    <!-- 叠加层：场地框 / 羽毛球轨迹 / 人员框 -->
+    <com.badminton.speed.ui.OverlayView
+        android:id="@+id/overlay_view"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <!-- 顶栏：关闭 + 标题 + 状态 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:padding="10dp"
+        android:background="#66000000">
+
+        <ImageView
+            android:id="@+id/btn_close"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:padding="6dp"
+            android:src="@android:drawable/ic_menu_close_clear_cancel"
+            android:contentDescription="@string/realtime_close"
+            app:tint="@color/text_primary" />
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="10dp"
+            android:text="@string/realtime_mode"
+            android:textColor="@color/green_neon"
+            android:textSize="18sp"
+            android:textStyle="bold" />
+
+        <Space
+            android:layout_width="0dp"
+            android:layout_height="1dp"
+            android:layout_weight="1" />
+
+        <TextView
+            android:id="@+id/tv_status"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/realtime_status_court"
+            android:textColor="@color/text_secondary"
+            android:textSize="12sp" />
+    </LinearLayout>
+
+    <!-- 右侧：实时速度面板 -->
+    <LinearLayout
+        android:layout_width="150dp"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|end"
+        android:layout_marginTop="62dp"
+        android:layout_marginEnd="12dp"
+        android:orientation="vertical"
+        android:padding="12dp"
+        android:background="@color/bg_card_elevated">
+
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="@string/realtime_speed_now"
+            android:textColor="@color/text_secondary"
+            android:textSize="11sp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:gravity="baseline"
+            android:layout_marginTop="2dp">
+
+            <TextView
+                android:id="@+id/tv_speed_value"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="0"
+                android:textColor="@color/green_neon"
+                android:textSize="34sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="4dp"
+                android:text="km/h"
+                android:textColor="@color/text_secondary"
+                android:textSize="11sp" />
+        </LinearLayout>
+
+        <TextView
+            android:id="@+id/tv_speed_max"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/realtime_speed_max"
+            android:textColor="@color/text_primary"
+            android:textSize="12sp" />
+
+        <TextView
+            android:id="@+id/tv_hit_count"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="4dp"
+            android:text="@string/realtime_hits"
+            android:textColor="@color/text_primary"
+            android:textSize="12sp" />
+    </LinearLayout>
+
+    <!-- 底部：提示 + 结束按钮 -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:orientation="vertical"
+        android:padding="12dp"
+        android:background="#66000000">
+
+        <TextView
+            android:id="@+id/tv_hint"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_gravity="center_horizontal"
+            android:text="@string/realtime_hint"
+            android:textColor="@color/text_secondary"
+            android:textSize="12sp" />
+
+        <Button
+            android:id="@+id/btn_finish"
+            android:layout_width="match_parent"
+            android:layout_height="44dp"
+            android:layout_marginTop="8dp"
+            android:text="@string/realtime_finish"
+            android:textSize="13sp"
+            style="@style/BtnGreen" />
+    </LinearLayout>
+</FrameLayout>
