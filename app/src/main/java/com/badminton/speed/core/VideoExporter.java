@@ -5,7 +5,6 @@ import android.media.MediaScannerConnection;
 import android.os.Environment;
 import android.util.Log;
 
-import org.opencv.core.Core;
 import org.opencv.core.Mat;
 import org.opencv.core.Point;
 import org.opencv.core.Scalar;
@@ -124,7 +123,7 @@ public class VideoExporter {
         String info = String.format("MAX %d km/h   HITS %d   LAST %s", (int) d.maxSpeed, hitCnt, last);
         Imgproc.rectangle(frame, new Point(0, 0), new Point(w, 42), barBg, Imgproc.FILLED);
         Imgproc.putText(frame, info, new Point(12, 29),
-                Core.FONT_HERSHEY_SIMPLEX, 0.75, white, 2, Imgproc.LINE_AA);
+                0 /* FONT_HERSHEY_SIMPLEX */, 0.75, white, 2, Imgproc.LINE_AA);
 
         // 场地四角框（黄）
         if (d.courtCorners != null && d.courtCorners.length >= 4) {
