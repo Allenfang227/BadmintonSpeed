@@ -14,70 +14,91 @@ import java.util.List;
  * 球速计算 + 3D 轨迹重建：
  *   1) 连续帧追踪羽毛球 → 每帧像素位置序列
  *   2) 单应矩阵把图像坐标映射到标准场地坐标（米）
- *   3) 用 30 FPS 视频，每帧时间 = 1/30 秒
- *   4) 速度 = 位移 / 时间 → m/s → km/h
- *   5) 3D 重建：如果已知场地是平的（z≈0 近似），用单应矩阵足够；
- *      更精确可结合 solvePnP 估计相机位姿后做 3D 三角化。
- *   6) 界内界外判定：羽毛球场地白线上（由单应矩阵的已知边界）
+ *   3) 速度 = 位移 / 时间 → m/s → km/h
+ *   4) 3D 重建：地面平面近似（z≈0），更精确可结合 solvePnP。
+ *
+ * v2.45 算法优化：
+ *   - 修复 null 点填 0、米/像素单位混用导致的伪高速度 bug
+ *   - 物理上限过滤（羽毛球世界纪录 ~493 km/h，>600 视为异常剔除）
+ *   - 平滑改为「窗口内有效值平均」，避免 0 值把真实峰值拉低
  */
 public class SpeedCalculator {
 
     private static final String TAG = "SpeedCalculator";
+    /** 羽毛球物理速度上限 km/h（超出视为检测跳变，剔除） */
+    private static final double MAX_PLAUSIBLE_KMH = 600.0;
 
     /**
-     * 计算球速（含移动平均平滑，参考文档 SpeedCalculator）。
-     * @param trajectoryPx 每步羽毛球像素坐标（要有至少 2 个点）
+     * 计算球速（含稳健平滑）。
+     * @param trajectoryPx 每步羽毛球像素坐标（至少 2 个点；pipeline 已过滤 null）
      * @param fps 视频帧率
      * @param frameStep 相邻轨迹点间隔的帧数（如每 4 帧采 1 点则传 4）
      * @param courtH 场地单应矩阵（图像 → 标准场地坐标，单位：米），可为 null
-     * @return 每步速度列表 km/h（已平滑）
+     * @return 每步速度列表 km/h（与 trajectoryPx 等长、按索引对齐）
      */
     public List<Double> computeSpeed(List<Point> trajectoryPx, int fps, int frameStep, Mat courtH) {
-        List<Double> raw = new ArrayList<>();
-        if (trajectoryPx == null || trajectoryPx.size() < 2 || fps <= 0) return raw;
+        List<Double> out = new ArrayList<>();
+        if (trajectoryPx == null || trajectoryPx.size() < 2 || fps <= 0) return out;
         if (frameStep < 1) frameStep = 1;
 
         double dt = (double) frameStep / fps; // 相邻轨迹点的真实时间间隔（秒）
-        Point prevMeters = null;
+        int n = trajectoryPx.size();
+        double[] raw = new double[n];
 
-        for (int i = 0; i < trajectoryPx.size(); i++) {
+        Point prevPx = null;   // 无标定时的上一点（像素）
+        Point prevMeter = null; // 有标定时的上一点（米）
+
+        for (int i = 0; i < n; i++) {
             Point px = trajectoryPx.get(i);
-            if (px == null) { raw.add(0.0); prevMeters = null; continue; }
-            Point meters = courtH != null ? warpPoint(courtH, px) : null;
-
-            if (meters == null && courtH == null) {
-                // 退化：用像素速度，仅做相对比较
-                if (prevMeters != null) {
-                    double distPx = Math.hypot(px.x - prevMeters.x, px.y - prevMeters.y);
-                    raw.add(distPx / dt / 3.6); // px/s 近似
-                } else {
-                    raw.add(0.0);
-                }
-            } else if (meters != null && prevMeters != null) {
-                double distM = Math.hypot(meters.x - prevMeters.x, meters.y - prevMeters.y);
-                double mPerSec = distM / dt;
-                raw.add(mPerSec * 3.6);
-            } else {
-                raw.add(0.0);
+            double v = 0;
+            if (px == null) {
+                // 断点：不计速度，且断开连续性，避免跨缺口算出伪速度
+                prevPx = null;
+                prevMeter = null;
+                raw[i] = 0;
+                continue;
             }
-            prevMeters = (meters != null) ? meters : px;
+            if (courtH == null) {
+                // 无标定退化：像素速度（px/s），仅作相对参考
+                if (prevPx != null) {
+                    v = Math.hypot(px.x - prevPx.x, px.y - prevPx.y) / dt;
+                }
+                prevPx = px;
+            } else {
+                Point m = warpPoint(courtH, px);
+                if (m != null && prevMeter != null) {
+                    v = Math.hypot(m.x - prevMeter.x, m.y - prevMeter.y) / dt * 3.6; // km/h
+                }
+                // 单位严格一致：warp 失败即断开，绝不拿像素点去和米制点相减
+                prevMeter = m;
+            }
+            if (v > MAX_PLAUSIBLE_KMH) v = 0; // 离群过滤
+            raw[i] = v;
         }
 
-        // 移动平均平滑（窗口 5），减少抖动
-        return movingAverage(raw, 5);
+        return smoothValid(raw);
     }
 
-    /** 移动平均平滑，保留原长度（两端用可用窗口）。 */
-    private List<Double> movingAverage(List<Double> raw, int win) {
-        List<Double> out = new ArrayList<>(raw.size());
-        for (int i = 0; i < raw.size(); i++) {
-            double sum = 0; int n = 0;
-            for (int j = Math.max(0, i - win / 2); j <= Math.min(raw.size() - 1, i + win / 2); j++) {
-                sum += raw.get(j); n++;
+    /**
+     * 稳健平滑：对每个位置，取窗口内「有效(>0)」值的平均；窗口内无有效值则填 0。
+     * 保留与原序列等长、按索引对齐（HitDetector 依赖此对齐做峰值检测）。
+     */
+    private List<Double> smoothValid(double[] raw, int win) {
+        List<Double> out = new ArrayList<>(raw.length);
+        int half = win / 2;
+        for (int i = 0; i < raw.length; i++) {
+            double sum = 0;
+            int c = 0;
+            for (int j = Math.max(0, i - half); j <= Math.min(raw.length - 1, i + half); j++) {
+                if (raw[j] > 0) { sum += raw[j]; c++; }
             }
-            out.add(n > 0 ? sum / n : 0.0);
+            out.add(c > 0 ? sum / c : 0.0);
         }
         return out;
+    }
+
+    private List<Double> smoothValid(double[] raw) {
+        return smoothValid(raw, 5);
     }
 
     /**

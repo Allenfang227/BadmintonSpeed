@@ -21,6 +21,7 @@ import androidx.annotation.Nullable;
 import androidx.fragment.app.Fragment;
 
 import com.badminton.speed.R;
+import com.badminton.speed.core.VideoExporter;
 
 import java.io.File;
 import java.util.List;
@@ -49,6 +50,8 @@ public class ResultsFragment extends Fragment implements SurfaceHolder.Callback 
     private org.opencv.core.Point[] courtCorners;
     private List<com.badminton.speed.core.HitDetector.HitEvent> hits;
     private double fps = 30;
+    private double maxSpeedArg = 0;
+    private String inOutArg = "未知";
 
     private final Handler uiHandler = new Handler(Looper.getMainLooper());
     private Runnable progressRunnable;
@@ -68,6 +71,9 @@ public class ResultsFragment extends Fragment implements SurfaceHolder.Callback 
         String inOut = getArguments() != null ? getArguments().getString("inOut", "未知") : null;
         fps = getArguments() != null ? getArguments().getDouble("fps", 30) : 30;
         if (fps <= 0) fps = 30;
+        maxSpeedArg = getArguments() != null ? getArguments().getDouble("maxSpeed", 0) : 0;
+        String inOutArgTmp = getArguments() != null ? getArguments().getString("inOut", "未知") : "未知";
+        inOutArg = (inOutArgTmp != null) ? inOutArgTmp : "未知";
 
         // 实时叠加层
         overlayView = v.findViewById(R.id.overlay_view);
@@ -153,9 +159,7 @@ public class ResultsFragment extends Fragment implements SurfaceHolder.Callback 
                         trajectoryView.getVisibility() == View.VISIBLE ? View.GONE : View.VISIBLE);
             }
         });
-        btnDownload.setOnClickListener(view -> {
-            android.widget.Toast.makeText(getContext(), "已保存到相册", android.widget.Toast.LENGTH_SHORT).show();
-        });
+        btnDownload.setOnClickListener(view -> exportVideo());
 
         seekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
             @Override public void onProgressChanged(SeekBar sb, int p, boolean fromUser) {
@@ -236,6 +240,44 @@ public class ResultsFragment extends Fragment implements SurfaceHolder.Callback 
         if (tvHitCount != null) tvHitCount.setText(hits.size() + " 次");
         if (tvInCount != null) tvInCount.setText(String.valueOf(inCnt));
         if (tvOutCount != null) tvOutCount.setText(String.valueOf(outCnt));
+    }
+
+    /** 导出带叠加层的分析视频（子线程执行 OpenCV 重编码，保存到相册影音目录） */
+    private void exportVideo() {
+        if (videoPath == null) {
+            android.widget.Toast.makeText(getContext(), "没有可导出的视频", android.widget.Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (!com.badminton.speed.OpenCVInit.isLoaded()) {
+            android.widget.Toast.makeText(getContext(), "OpenCV 未加载，无法导出", android.widget.Toast.LENGTH_LONG).show();
+            return;
+        }
+        android.widget.Toast.makeText(getContext(), "正在导出视频，请稍候…", android.widget.Toast.LENGTH_SHORT).show();
+        new Thread(() -> {
+            try {
+                VideoExporter.ExportData d = new VideoExporter.ExportData();
+                d.videoPath = videoPath;
+                d.courtCorners = courtCorners;
+                d.trajectory = sceneTrajectory;
+                d.playerTrack = playerTrack;
+                d.hits = hits;
+                d.fps = fps;
+                d.shuttleSkip = 4;
+                d.maxSpeed = maxSpeedArg;
+                d.inOut = inOutArg;
+                final String path = VideoExporter.export(requireContext(), d);
+                if (!isAdded()) return;
+                requireActivity().runOnUiThread(() ->
+                        android.widget.Toast.makeText(getContext(), "已保存到影音/相册：\n" + path,
+                                android.widget.Toast.LENGTH_LONG).show());
+            } catch (Throwable t) {
+                if (!isAdded()) return;
+                String msg = t.getMessage() != null ? t.getMessage() : "未知错误";
+                requireActivity().runOnUiThread(() ->
+                        android.widget.Toast.makeText(getContext(), "导出失败：" + msg,
+                                android.widget.Toast.LENGTH_LONG).show());
+            }
+        }).start();
     }
 
     private void togglePlay() {
